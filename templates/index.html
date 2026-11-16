@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SmartExamSeat</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">SES</span>
+    <div>
+      <h1>SmartExamSeat</h1>
+      <p>University exam seating planner &middot; Prolog CSP engine</p>
+    </div>
+  </div>
+  <div class="dataset">
+    <code>{{ dataset }}</code>
+    <span>{{ catalogue.summary.students }} students &middot;
+          {{ catalogue.summary.subjects }} subjects &middot;
+          {{ catalogue.summary.rooms_available }} rooms &middot;
+          {{ catalogue.summary.seats }} seats</span>
+  </div>
+</header>
+
+<main>
+  <aside class="panel">
+    <section>
+      <label class="field-label" for="session">Exam session</label>
+      <select id="session">
+        {% for s in catalogue.sessions %}
+        <option value="{{ s.id }}">
+          {{ s.id }} &mdash; {{ s.date }} {{ s.start }}-{{ s.end }}
+          &middot; {{ s.exams|length }} exam{{ '' if s.exams|length == 1 else 's' }}
+          &middot; {{ s.students }} students
+        </option>
+        {% endfor %}
+      </select>
+    </section>
+
+    <section>
+      <span class="field-label">Year levels <em>(none = all)</em></span>
+      <div class="chips" id="years">
+        {% for y in catalogue.years %}
+        <label class="chip"><input type="checkbox" value="{{ y }}"><span>Year {{ y }} <small class="n"></small></span></label>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section>
+      <span class="field-label">Majors <em>(none = all)</em></span>
+      <div class="chips" id="majors">
+        {% for m in catalogue.majors %}
+        <label class="chip"><input type="checkbox" value="{{ m }}"><span>{{ m|upper }} <small class="n"></small></span></label>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section id="capacity" class="capacity">
+      <span class="field-label">Selected for this session</span>
+      <div class="cap-line"><b id="capsel">&ndash;</b> / <span id="capseats">&ndash;</span> seats</div>
+      <div class="bar"><i id="capbar"></i></div>
+      <div class="cap-sub" id="capacc"></div>
+    </section>
+
+    <section class="actions">
+      <button id="generate" class="primary">Generate seating</button>
+      <button id="validate" disabled>Validate plan</button>
+    </section>
+
+    <section class="actions">
+      <span class="field-label">Whole term</span>
+      <button id="term">Seat every session</button>
+    </section>
+
+    <section class="actions downloads">
+      <span class="field-label">Export</span>
+      <a id="csv" class="btn-link disabled" href="#">Full plan (CSV)</a>
+      <a id="roomscsv" class="btn-link disabled" href="#">Room summary (CSV)</a>
+      <a id="pdf" class="btn-link disabled" href="#">All rooms (PDF)</a>
+      <a id="pdfroom" class="btn-link disabled" href="#">This room (PDF)</a>
+    </section>
+
+    <section class="rules">
+      <span class="field-label">Hard constraints enforced</span>
+      <ul>
+        <li>exactly one seat per student</li>
+        <li>no seat used twice</li>
+        <li>room capacity &amp; availability</li>
+        <li>accessible students on accessible seats</li>
+        <li>no two exams in one session</li>
+        <li>same-exam students &ge; 2 columns apart in a row</li>
+      </ul>
+    </section>
+  </aside>
+
+  <section class="content">
+    <button id="backterm" class="back hidden">&larr; Back to whole term</button>
+    <div id="status" class="status idle">
+      Pick a session and press <b>Generate seating</b>.
+    </div>
+
+    <div id="statbar" class="statbar hidden"></div>
+    <div id="validation" class="validation hidden"></div>
+
+    <div id="termview" class="hidden">
+      <div class="list-wrap">
+        <div class="list-head">
+          <h2>Sessions</h2>
+          <span class="hint">click a session to open its seating plan</span>
+        </div>
+        <table class="students term-sessions">
+          <thead><tr>
+            <th>Session</th><th>Date</th><th>Time</th><th>Exams</th>
+            <th>Students</th><th>Rooms</th><th>Result</th>
+          </tr></thead>
+          <tbody id="termrows"></tbody>
+        </table>
+      </div>
+      <div class="list-wrap">
+        <div class="list-head">
+          <h2>Exams seated per cohort</h2>
+          <span class="hint">seated / total exam seats &middot; a cohort is done when every one of its exams is seated</span>
+        </div>
+        <div class="grid-scroll"><table class="coverage" id="coverage"></table></div>
+      </div>
+    </div>
+
+    <div id="plan" class="hidden">
+      <div class="room-tabs" id="roomtabs"></div>
+      <div class="grid-wrap">
+        <div class="grid-head">
+          <h2 id="roomtitle"></h2>
+          <div class="legend" id="legend"></div>
+        </div>
+        <div class="grid-scroll"><div id="grid" class="grid"></div></div>
+        <p class="front">&uarr; front of the room / invigilator desk</p>
+      </div>
+
+      <div class="list-wrap">
+        <div class="list-head">
+          <h2>Students in this room</h2>
+          <input id="search" type="search" placeholder="filter by name, id or exam">
+        </div>
+        <table class="students">
+          <thead><tr>
+            <th>Seat</th><th>Student ID</th><th>Name</th>
+            <th>Exam</th><th>Major</th><th>Year</th>
+          </tr></thead>
+          <tbody id="studentrows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const EXAM_COLORS = ["#2f6fed","#1f9d74","#c2810a","#8b5cf6","#e05260",
+                     "#0d9bb8","#6366f1","#7a9c1f"];
+
+const state = { report: null, room: null, colors: {}, cohorts: null, term: null };
+
+function selected(id) {
+  return [...document.querySelectorAll(`#${id} input:checked`)]
+         .map(i => i.value);
+}
+function currentFilters() {
+  return {
+    session: document.getElementById("session").value,
+    years: selected("years").map(Number),
+    majors: selected("majors"),
+  };
+}
+function queryString(f) {
+  const p = new URLSearchParams({ session: f.session });
+  if (f.years.length)  p.set("years", f.years.join(","));
+  if (f.majors.length) p.set("majors", f.majors.join(","));
+  return p.toString();
+}
+
+// ---------- capacity: selection counter ----------
+
+// Students picked by a year/major filter. Empty list = everyone.
+function countFor(years, majors) {
+  let n = 0, acc = 0;
+  for (const c of (state.cohorts ? state.cohorts.cohorts : [])) {
+    if ((!years.length || years.includes(c.year)) &&
+        (!majors.length || majors.includes(c.major))) {
+      n += c.students; acc += c.accessible;
+    }
+  }
+  return { n, acc };
+}
+function fits(sel) {
+  return sel.n <= state.cohorts.seats && sel.acc <= state.cohorts.accessible_seats;
+}
+function toggled(list, value) {
+  return list.includes(value) ? list.filter(v => v !== value) : [...list, value];
+}
+
+async function loadCohorts(session) {
+  state.cohorts = null;
+  const res = await fetch(`/api/session/${encodeURIComponent(session)}/cohorts`);
+  state.cohorts = await res.json();
+  updateSelection();
+}
+
+function updateSelection() {
+  if (!state.cohorts) return;
+  const f = currentFilters();
+  const cur = countFor(f.years, f.majors);
+  const seats = state.cohorts.seats, aseats = state.cohorts.accessible_seats;
+  const over = !fits(cur);
+
+  document.getElementById("capsel").textContent = cur.n.toLocaleString();
+  document.getElementById("capseats").textContent = seats.toLocaleString();
+  const bar = document.getElementById("capbar");
+  bar.style.width = Math.min(100, seats ? 100 * cur.n / seats : 0) + "%";
+  document.getElementById("capacity").classList.toggle("over", over);
+  document.getElementById("capacc").innerHTML =
+    `${cur.acc} / ${aseats} accessible seats` +
+    (over ? `<br><b>Over capacity &mdash; untick some years or majors.</b>` : "");
+
+  // Each chip shows how many students it covers, and is disabled when
+  // ticking (or unticking) it would push the selection past the rooms.
+  document.querySelectorAll("#years input").forEach(i => {
+    const y = Number(i.value);
+    i.parentElement.querySelector(".n").textContent =
+      countFor([y], f.majors).n;
+    const next = countFor(toggled(f.years, y), f.majors);
+    i.disabled = !over && !fits(next);
+    i.parentElement.title = i.disabled ? `would select ${next.n} students (${seats} seats)` : "";
+  });
+  document.querySelectorAll("#majors input").forEach(i => {
+    const m = i.value;
+    i.parentElement.querySelector(".n").textContent =
+      countFor(f.years, [m]).n;
+    const next = countFor(f.years, toggled(f.majors, m));
+    i.disabled = !over && !fits(next);
+    i.parentElement.title = i.disabled ? `would select ${next.n} students (${seats} seats)` : "";
+  });
+  document.getElementById("generate").disabled = over;
+}
+
+// ---------- whole term ----------
+
+async function runTerm() {
+  const button = document.getElementById("term");
+  button.disabled = true;
+  setStatus("Seating every session of the term&hellip;", "busy");
+  showView("term");
+  document.getElementById("termview").classList.add("hidden");
+  try {
+    const res = await fetch("/api/term", { method: "POST" });
+    const data = await res.json();
+    if (data.error) { setStatus("<b>Failed.</b> " + data.error.message, "error"); return; }
+    renderTerm(data);
+  } catch (err) {
+    setStatus("<b>Request failed.</b> " + err, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderTerm(data) {
+  state.term = data;
+  history.replaceState(null, "", "?view=term");
+  const okSessions = data.sessions.filter(s => s.status === "ok").length;
+  const seated = data.coverage.reduce((a, c) => a + c.seated, 0);
+  const total = data.coverage.reduce((a, c) => a + c.total, 0);
+  const done = data.coverage.filter(c => c.seated === c.total).length;
+  const allDone = okSessions === data.sessions.length;
+  setStatus(allDone
+    ? `Every session seated: <b>${seated.toLocaleString()}</b> exam seats, all <b>${done}</b> cohorts done.`
+    : `<b>${data.sessions.length - okSessions}</b> session(s) could not be seated &mdash; ` +
+      `${data.coverage.length - done} cohort(s) are not finished.`,
+    allDone ? "ok" : "error");
+
+  const sb = document.getElementById("statbar");
+  sb.className = "statbar";
+  sb.innerHTML = `
+    ${stat("Sessions seated", okSessions + " / " + data.sessions.length)}
+    ${stat("Exam seats", seated.toLocaleString() + " / " + total.toLocaleString())}
+    ${stat("Cohorts done", done + " / " + data.coverage.length)}
+    ${stat("Total time", data.millis + " ms")}`;
+
+  document.getElementById("termrows").innerHTML = data.sessions.map(s => {
+    const result = s.status === "ok" ? `<span class="tag ok">seated</span>`
+      : s.status === "invalid" ? `<span class="tag err">${s.violations} violation(s)</span>`
+      : `<span class="tag err" title="${s.reason}">failed</span>`;
+    return `<tr data-session="${s.session}">
+      <td class="mono">${s.session}</td><td>${s.date}</td><td>${s.start}-${s.end}</td>
+      <td>${s.exams}</td><td>${s.students}</td><td>${s.rooms}</td><td>${result}</td></tr>`;
+  }).join("");
+  document.querySelectorAll("#termrows tr").forEach(tr => tr.onclick = () => {
+    // new history entry, so the browser's Back button returns to the list
+    history.pushState(null, "", "?session=" + tr.dataset.session);
+    document.getElementById("session").value = tr.dataset.session;
+    document.querySelectorAll("#years input, #majors input").forEach(i => i.checked = false);
+    loadCohorts(tr.dataset.session).then(generate);
+  });
+
+  const majors = [...new Set(data.coverage.map(c => c.major))].sort();
+  const years = [...new Set(data.coverage.map(c => c.year))].sort((a, b) => a - b);
+  const cell = (m, y) => data.coverage.find(c => c.major === m && c.year === y);
+  document.getElementById("coverage").innerHTML =
+    `<tr><th>Major</th>${years.map(y => `<th>Year ${y}</th>`).join("")}</tr>` +
+    majors.map(m => `<tr><th>${m.toUpperCase()}</th>${years.map(y => {
+      const c = cell(m, y);
+      if (!c) return `<td class="none">&ndash;</td>`;
+      const ok = c.seated === c.total;
+      return `<td class="${ok ? "done" : "todo"}">${c.seated}/${c.total}</td>`;
+    }).join("")}</tr>`).join("");
+
+  document.getElementById("termview").classList.remove("hidden");
+}
+
+// Re-show the last whole-term result without re-running it.
+function backToTerm() {
+  if (!state.term) return runTerm();
+  showView("term");
+  renderTerm(state.term);
+}
+
+function showView(which) {
+  document.getElementById("termview").classList.toggle("hidden", which !== "term");
+  document.getElementById("backterm").classList.toggle(
+    "hidden", which === "term" || !state.term);
+  if (which === "term") {
+    document.getElementById("plan").classList.add("hidden");
+    document.getElementById("validation").classList.add("hidden");
+  }
+}
+
+function setStatus(text, kind) {
+  const el = document.getElementById("status");
+  el.className = "status " + kind;
+  el.innerHTML = text;
+}
+
+async function generate() {
+  const filters = currentFilters();
+  const button = document.getElementById("generate");
+  button.disabled = true;
+  setStatus("Running the Prolog solver&hellip;", "busy");
+  showView("plan");
+  document.getElementById("plan").classList.add("hidden");
+  document.getElementById("statbar").classList.add("hidden");
+  document.getElementById("validation").classList.add("hidden");
+
+  try {
+    const res = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(filters),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      setStatus("<b>Generation failed.</b> " +
+                (data.error && data.error.message || "Unknown reason."), "error");
+      setDownloads(false);
+      document.getElementById("validate").disabled = true;
+      return;
+    }
+    state.report = data;
+    renderReport(data);
+  } catch (err) {
+    setStatus("<b>Request failed.</b> " + err, "error");
+  } finally {
+    button.disabled = false;
+    updateSelection();
+  }
+}
+
+function renderReport(data) {
+  if (data.total === 0) {
+    setStatus("No students match those filters in " + data.session + ".", "warn");
+    setDownloads(false);
+    document.getElementById("validate").disabled = true;
+    return;
+  }
+  setStatus(`Seated <b>${data.total}</b> students across ` +
+            `<b>${data.rooms.length}</b> room(s) in ${data.session}.`, "ok");
+
+  const s = data.stats || {};
+  document.getElementById("statbar").className = "statbar";
+  document.getElementById("statbar").innerHTML = `
+    ${stat("Students", data.total)}
+    ${stat("Rooms used", data.rooms.length)}
+    ${stat("Reallocations", s.retries ?? 0)}
+    ${stat("Solve time", (s.millis ?? 0) + " ms")}`;
+
+  renderValidation(data.validation);
+
+  const exams = [...new Set(data.rooms.flatMap(r => r.exams))].sort();
+  state.colors = {};
+  exams.forEach((e, i) => state.colors[e] = EXAM_COLORS[i % EXAM_COLORS.length]);
+
+  const tabs = document.getElementById("roomtabs");
+  tabs.innerHTML = "";
+  data.rooms.forEach((room, i) => {
+    const b = document.createElement("button");
+    b.className = "tab" + (i === 0 ? " active" : "");
+    b.dataset.room = room.id;
+    b.innerHTML = `${room.id}<small>${room.count}</small>`;
+    b.onclick = () => selectRoom(room.id);
+    tabs.appendChild(b);
+  });
+
+  document.getElementById("plan").classList.remove("hidden");
+  document.getElementById("validate").disabled = false;
+  setDownloads(true);
+  pushUrl(currentFilters());
+  selectRoom(data.rooms[0].id);
+}
+
+function stat(label, value) {
+  return `<div class="stat"><span>${label}</span><b>${value}</b></div>`;
+}
+
+function renderValidation(v) {
+  const el = document.getElementById("validation");
+  el.classList.remove("hidden");
+  if (!v || v.status === "not_run") {
+    el.className = "validation warn";
+    el.innerHTML = "Validator did not run.";
+    return;
+  }
+  if (v.status === "valid") {
+    el.className = "validation ok";
+    el.innerHTML = "<b>Validator: passed.</b> " +
+      "No hard constraint is violated" +
+      (v.checked ? ` (${v.checked} assignments checked).` : ".");
+    return;
+  }
+  el.className = "validation error";
+  const items = (v.violations || []).slice(0, 25)
+      .map(x => `<li><code>${x.rule}</code> ${x.message || x.details}</li>`)
+      .join("");
+  const more = (v.violations || []).length > 25
+      ? `<li>&hellip; and ${v.violations.length - 25} more</li>` : "";
+  el.innerHTML = `<b>Validator: ${v.violations.length} violation(s).</b>
+                  <ul>${items}${more}</ul>`;
+}
+
+function selectRoom(roomId) {
+  state.room = roomId;
+  [...document.querySelectorAll("#roomtabs .tab")].forEach(t =>
+    t.classList.toggle("active", t.dataset.room === roomId));
+
+  const room = state.report.rooms.find(r => r.id === roomId);
+  document.getElementById("roomtitle").textContent =
+    `Room ${room.id} — ${room.count} students, ${room.rows}×${room.cols} seats`;
+
+  document.getElementById("legend").innerHTML = room.exams.map(e =>
+    `<span class="key"><i style="background:${state.colors[e]}"></i>${e}</span>`
+  ).join("") + `<span class="key"><i class="acc"></i>accessible seat</span>`;
+
+  const taken = new Map();
+  room.assignments.forEach(a => taken.set(a.row + ":" + a.col, a));
+  const accessible = new Set(room.seatTypes.map(([r, c]) => r + ":" + c));
+
+  const grid = document.getElementById("grid");
+  grid.style.gridTemplateColumns = `repeat(${room.cols + 1}, auto)`;
+  let html = `<div class="corner"></div>`;
+  for (let c = 1; c <= room.cols; c++) html += `<div class="colhead">${c}</div>`;
+  for (let r = 1; r <= room.rows; r++) {
+    html += `<div class="rowhead">${r}</div>`;
+    for (let c = 1; c <= room.cols; c++) {
+      const key = r + ":" + c;
+      const a = taken.get(key);
+      const acc = accessible.has(key) ? " acc" : "";
+      if (a) {
+        html += `<div class="seat filled${acc}" style="--c:${state.colors[a.exam]}"
+                      title="${a.name} (${a.student})\n${a.exam} · ${a.major.toUpperCase()} year ${a.year}\nrow ${r}, col ${c}">
+                   <b>${a.student}</b><span>${a.name}</span></div>`;
+      } else {
+        html += `<div class="seat empty${acc}" title="row ${r}, col ${c} — empty"></div>`;
+      }
+    }
+  }
+  grid.innerHTML = html;
+
+  renderStudents(room.assignments);
+  document.getElementById("search").value = "";
+  updateRoomPdfLink();
+}
+
+function renderStudents(rows, filter) {
+  const needle = (filter || "").toLowerCase();
+  const body = document.getElementById("studentrows");
+  const show = rows.filter(a => !needle ||
+    (a.name + " " + a.student + " " + a.exam + " " + a.major)
+      .toLowerCase().includes(needle));
+  body.innerHTML = show
+    .sort((a, b) => a.row - b.row || a.col - b.col)
+    .map(a => `<tr>
+        <td class="mono">R${a.row}C${a.col}</td>
+        <td class="mono">${a.student}</td>
+        <td>${a.name}</td>
+        <td><span class="pill" style="--c:${state.colors[a.exam]}">${a.exam}</span></td>
+        <td>${a.major.toUpperCase()}</td><td>${a.year}</td>
+      </tr>`).join("") ||
+    `<tr><td colspan="6" class="empty-row">nothing matches &ldquo;${filter}&rdquo;</td></tr>`;
+}
+
+function setDownloads(enabled) {
+  const qs = state.report ? queryString(currentFilters()) : "";
+  const map = {
+    csv: "/export/csv?" + qs,
+    roomscsv: "/export/rooms.csv?" + qs,
+    pdf: "/export/pdf?" + qs,
+  };
+  for (const [id, href] of Object.entries(map)) {
+    const el = document.getElementById(id);
+    el.classList.toggle("disabled", !enabled);
+    el.href = enabled ? href : "#";
+  }
+  updateRoomPdfLink(enabled);
+}
+
+function updateRoomPdfLink(enabled) {
+  const el = document.getElementById("pdfroom");
+  const on = (enabled !== false) && state.report && state.room;
+  el.classList.toggle("disabled", !on);
+  el.href = on
+    ? "/export/pdf?" + queryString(currentFilters()) + "&room=" + state.room
+    : "#";
+  el.textContent = state.room ? `Room ${state.room} (PDF)` : "This room (PDF)";
+}
+
+async function validate() {
+  const button = document.getElementById("validate");
+  button.disabled = true;
+  const el = document.getElementById("validation");
+  el.className = "validation busy";
+  el.textContent = "Re-running the validator in Prolog…";
+  try {
+    const res = await fetch("/api/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(currentFilters()),
+    });
+    renderValidation(await res.json());
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// A generated plan is bookmarkable: ?session=sess1&years=1,2&majors=se,cs
+// re-selects the filters and regenerates on load.
+function pushUrl(f) {
+  history.replaceState(null, "", "?" + queryString(f));
+}
+function restoreFromUrl() {
+  const p = new URLSearchParams(location.search);
+  const session = p.get("session");
+  if (!session) return false;
+  const select = document.getElementById("session");
+  if (![...select.options].some(o => o.value === session)) return false;
+  select.value = session;
+  const apply = (id, values) =>
+    document.querySelectorAll(`#${id} input`).forEach(
+      i => i.checked = values.includes(i.value));
+  apply("years", (p.get("years") || "").split(",").filter(Boolean));
+  apply("majors", (p.get("majors") || "").split(",").filter(Boolean));
+  return true;
+}
+
+document.getElementById("generate").onclick = generate;
+document.getElementById("term").onclick = runTerm;
+document.getElementById("backterm").onclick = backToTerm;
+window.addEventListener("popstate", () => {
+  if (new URLSearchParams(location.search).get("view") === "term") backToTerm();
+});
+document.getElementById("validate").onclick = validate;
+document.getElementById("search").oninput = e => {
+  const room = state.report.rooms.find(r => r.id === state.room);
+  renderStudents(room.assignments, e.target.value);
+};
+document.querySelectorAll("#years input, #majors input")
+  .forEach(el => el.onchange = () => { setDownloads(false); updateSelection(); });
+document.getElementById("session").onchange = e => {
+  setDownloads(false);
+  loadCohorts(e.target.value);
+};
+
+const restored = restoreFromUrl();
+loadCohorts(document.getElementById("session").value).then(() => {
+  if (new URLSearchParams(location.search).get("view") === "term") runTerm();
+  else if (restored && !document.getElementById("generate").disabled) generate();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# Python dependencies for SmartExamSeat (Member C's layer).
+#
+# SWI-Prolog itself is a system package, not a pip package:
+#   Ubuntu/Debian:  sudo apt install swi-prolog
+#   macOS:          brew install swi-prolog
+#   Windows:        https://www.swi-prolog.org/download/stable
+
+pyswip>=0.3.0
+Flask>=3.0
+reportlab>=4.0
