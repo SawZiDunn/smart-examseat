@@ -157,10 +157,7 @@
 </main>
 
 <script>
-const EXAM_COLORS = ["#2f6fed","#1f9d74","#c2810a","#8b5cf6","#e05260",
-                     "#0d9bb8","#6366f1","#7a9c1f"];
-
-const state = { report: null, room: null, colors: {}, cohorts: null, term: null };
+const state = { report: null, room: null, examColors: {}, cohorts: null, term: null };
 
 function selected(id) {
   return [...document.querySelectorAll(`#${id} input:checked`)]
@@ -395,8 +392,10 @@ function renderReport(data) {
   renderValidation(data.validation);
 
   const exams = [...new Set(data.rooms.flatMap(r => r.exams))].sort();
-  state.colors = {};
-  exams.forEach((e, i) => state.colors[e] = EXAM_COLORS[i % EXAM_COLORS.length]);
+  state.examColors = {};
+  exams.forEach((exam, i) => {
+    state.examColors[exam] = `hsl(${i * 360 / exams.length} 68% 42%)`;
+  });
 
   const tabs = document.getElementById("roomtabs");
   tabs.innerHTML = "";
@@ -454,8 +453,8 @@ function selectRoom(roomId) {
   document.getElementById("roomtitle").textContent =
     `Room ${room.id} — ${room.count} students, ${room.rows}×${room.cols} seats`;
 
-  document.getElementById("legend").innerHTML = room.exams.map(e =>
-    `<span class="key"><i style="background:${state.colors[e]}"></i>${e}</span>`
+  document.getElementById("legend").innerHTML = room.exams.map(exam =>
+    `<span class="key"><i style="background:${state.examColors[exam]}"></i>${exam}</span>`
   ).join("") + `<span class="key"><i class="acc"></i>accessible seat</span>`;
 
   const taken = new Map();
@@ -473,7 +472,7 @@ function selectRoom(roomId) {
       const a = taken.get(key);
       const acc = accessible.has(key) ? " acc" : "";
       if (a) {
-        html += `<div class="seat filled${acc}" style="--c:${state.colors[a.exam]}"
+        html += `<div class="seat filled${acc}" style="--c:${state.examColors[a.exam]}"
                       title="${a.name} (${a.student})\n${a.exam} · ${a.major.toUpperCase()} year ${a.year}\nrow ${r}, col ${c}">
                    <b>${a.student}</b><span>${a.name}</span></div>`;
       } else {
@@ -500,8 +499,9 @@ function renderStudents(rows, filter) {
         <td class="mono">R${a.row}C${a.col}</td>
         <td class="mono">${a.student}</td>
         <td>${a.name}</td>
-        <td><span class="pill" style="--c:${state.colors[a.exam]}">${a.exam}</span></td>
-        <td>${a.major.toUpperCase()}</td><td>${a.year}</td>
+        <td><span class="pill" style="--c:${state.examColors[a.exam]}">${a.exam}</span></td>
+        <td>${a.major.toUpperCase()}</td>
+        <td>${a.year}</td>
       </tr>`).join("") ||
     `<tr><td colspan="6" class="empty-row">nothing matches &ldquo;${filter}&rdquo;</td></tr>`;
 }
