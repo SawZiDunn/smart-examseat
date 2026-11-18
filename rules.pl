@@ -49,8 +49,8 @@
 min_separation(1).
 
 %! max_retries(-N) is det.
-%  How many times generate_seating/3 may ask the allocator to reshuffle a
-%  room that the solver could not satisfy.
+%  Capacity-first reshuffles before room expansion is allowed. Further
+%  expansion retries stop when there are no unused rooms left.
 max_retries(3).
 
 
@@ -64,19 +64,30 @@ available_room(RoomId, Rows, Cols) :-
     user:room(RoomId, Rows, Cols, yes).
 
 %! room_seats(+RoomId, -Seats) is det.
-%  Seats = [seat(Row, Col, SeatType), ...] in row-major order.
+%  Seats = [seat(Row, Col, SeatType), ...] in column-major order.
 room_seats(RoomId, Seats) :-
     findall(seat(Row, Col, Type),
             user:seat(RoomId, Row, Col, Type),
             Unsorted),
-    sort(Unsorted, Seats).           % sort/2 on seat(Row,Col,_) == row-major
+    column_first(Unsorted, Seats).
 
 %! accessible_seats(+RoomId, -Seats) is det.
 accessible_seats(RoomId, Seats) :-
     findall(seat(Row, Col, accessible),
             user:seat(RoomId, Row, Col, accessible),
             Unsorted),
-    sort(Unsorted, Seats).
+    column_first(Unsorted, Seats).
+
+column_first(Unsorted, Seats) :-
+    findall(Col-seat(Row, Col, Type),
+            member(seat(Row, Col, Type), Unsorted),
+            Keyed),
+    keysort(Keyed, Sorted),
+    seat_values(Sorted, Seats).
+
+seat_values([], []).
+seat_values([_-Seat | Rest], [Seat | Seats]) :-
+    seat_values(Rest, Seats).
 
 %! room_capacity(+RoomId, -N) is det.
 %  Total number of physical seats in an available room.

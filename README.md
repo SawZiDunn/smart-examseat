@@ -188,13 +188,16 @@ When `solve_room/4` fails it returns a *reason*:
 not_enough_seats(RoomId, Needed, Have)
 not_enough_accessible(RoomId, Needed, Have)
 no_solution(RoomId)
+search_limit(RoomId)
 ```
 
 `generate_seating/3` feeds that reason back into `reallocate/4`, which moves
 students out of the broken room (accessible students for an accessibility
-failure, members of the largest exam group otherwise), opens an extra room if
-needed, and the solve restarts. Up to `max_retries(3)` attempts. On the full
-dataset only `sess12` currently needs this, and it recovers in 2 retries.
+failure, members of the largest exam group otherwise). It tries available
+capacity in existing rooms first. If bounded search and those reshuffles still
+do not solve the plan, it adds a room as a final fallback. `search_limit/1`
+means the search may have been inconclusive; it is not reported as a proven
+`no_solution/1`. Room expansion stops when there are no unused rooms left.
 
 ### 4.5 Other Prolog techniques used
 

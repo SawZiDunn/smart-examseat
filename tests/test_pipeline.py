@@ -107,6 +107,12 @@ class TestResultParser(unittest.TestCase):
         self.assertEqual(reason["kind"], "no_solution")
         self.assertEqual(reason["room"], "r103")
 
+    def test_failed_search_limit_is_not_no_solution(self):
+        _, reason = parse_result("failed(search_limit(r103))")
+        self.assertEqual(reason["kind"], "search_limit")
+        self.assertEqual(reason["room"], "r103")
+        self.assertIn("may still be feasible", reason["message"])
+
     def test_rejects_other_functors(self):
         with self.assertRaises(PrologError):
             parse_result("maybe([])")

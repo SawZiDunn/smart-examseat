@@ -38,9 +38,9 @@ make test-python     # bridge, web app, export and config tests
 | `dataset` | `tests/test_prolog.pl` | the data has no exam clashes, seats match room sizes, every session has enough accessible seats |
 | `selection` | 〃 | year and major filters pick the right students |
 | `allocation` | 〃 | each student goes to exactly one room, no room is over capacity, closed rooms are unused, rooms are balanced, reallocation keeps everyone |
-| `solver` | 〃 | one seat per student, no shared seats, accessibility, separation; reports `not_enough_seats`, `not_enough_accessible` and `no_solution` |
+| `solver` | 〃 | one seat per student, no shared seats, accessibility, separation; reports capacity failures, proven `no_solution` and `search_limit` distinctly |
 | `validator` | 〃 | accepts a good plan; catches 9 kinds of injected violation |
-| `pipeline_sample` / `pipeline_full` | 〃 | end to end: every session of the full dataset solves and validates |
+| `pipeline_sample` / `pipeline_full` | 〃 | end to end: every session of the full dataset solves and validates; sess1 reuses existing rooms after solver search limits |
 | `scenarios` | 〃 | the seating edge cases in section 5 succeed or fail as expected |
 | `timetable` | 〃 | the timetable is clash-free and within capacity; each failure reason is reported |
 | `term` | 〃 | cohort counts add up, capacity counts only open rooms, the whole term finishes every cohort |

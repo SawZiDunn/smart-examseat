@@ -240,6 +240,15 @@ def reason_to_dict(reason) -> dict:
         return {"kind": kind, "room": str(room),
                 "message": (f"No seating for room {room} satisfies every "
                             f"constraint, even after reallocation.")}
+    if kind == "search_limit":
+        room = args[0]
+        return {"kind": kind, "room": str(room),
+                "message": (f"Seating search for room {room} reached its work "
+                            f"limit; the room may still be feasible.")}
+    if kind == "search_error":
+        room = args[0]
+        return {"kind": kind, "room": str(room),
+                "message": f"Seating search failed unexpectedly in room {room}."}
     return {"kind": kind, "message": repr(reason)}
 
 
