@@ -86,8 +86,8 @@ exam_clash(StudentId, Session) :-
 %       hold everyone - capacity, accessible seats, and the per-exam row
 %       limit implied by the separation rule;
 %    2. keep each exam/major/year cohort contiguous in the student order;
-%    3. keep cohort members in the same room until its hard limits prevent
-%       that; use free space as the tie-breaker when there is no cohort room.
+%    3. choose eligible rooms by cohort fit, using a tight fit as the final
+%       tie-breaker to preserve room capacity for larger groups.
 allocate_rooms(Session, Students, Allocation) :-
     open_rooms(Students, Rooms),
     order_students(Students, Ordered),
@@ -223,53 +223,79 @@ empty_rooms([spec(RoomId, Cap, ACap, MaxE) | Rest],
 %! deal(+Students, +Slots0, -Slots, -Unplaced) is det.
 deal([], Slots, Slots, []).
 deal([S | Rest], Slots0, Slots, Unplaced) :-
-    (   place(S, Slots0, Slots1)
+    cohort_demand(S, [S | Rest], CohortSize, CohortAccess),
+    (   place(S, CohortSize, CohortAccess, Slots0, Slots1)
     ->  deal(Rest, Slots1, Slots, Unplaced)
     ;   deal(Rest, Slots0, Slots, Unplaced0),
         Unplaced = [S | Unplaced0]
     ).
 
-%! place(+Student, +Slots0, -Slots) is semidet.
-%  Prefer the student's cohort room, subject to hard room limits.
-place(s(StudentId, Code), Slots0, Slots) :-
+%! place(+Student, +CohortSize, +CohortAccess, +Slots0, -Slots) is semidet.
+%  Prefer the room that can keep the largest part of the student's cohort
+%  together. Among equally good rooms, use the tightest fit.
+place(Student, CohortSize, CohortAccess, Slots0, Slots) :-
+    Student = s(StudentId, _),
     (   rules:needs_accessible(StudentId) -> Access = yes ; Access = no ),
-    Student = s(StudentId, Code),
-    best_slot(Slots0, Access, Student, Best),
+    best_slot(Slots0, Access, Student, CohortSize, CohortAccess, Best),
     Best = slot(RoomId, _, _, _, _, _),
     add_to_slot(RoomId, Student, Access, Slots0, Slots).
 
-best_slot(Slots, Access, Student, Best) :-
+cohort_demand(Student, Remaining, Total, Accessible) :-
+    cohort_key(Student, Key),
+    include(in_cohort(Key), Remaining, Members),
+    length(Members, Total),
+    include(access_student, Members, AccessibleMembers),
+    length(AccessibleMembers, Accessible).
+
+in_cohort(Key, Student) :-
+    cohort_key(Student, Key).
+
+best_slot(Slots, Access, Student, CohortSize, CohortAccess, Best) :-
     Student = s(_, Code),
     include(can_take(Access, Code), Slots, Candidates),
     Candidates = [First | _],
-    foldl(better_cohort_slot(Student), Candidates, First, Best).
+    cohort_key(Student, Key),
+    foldl(better_cohort_slot(Key, Code, CohortSize, CohortAccess),
+          Candidates, First, Best).
 
 can_take(Access, Code, slot(_, Free, FreeA, MaxE, Counts, _)) :-
     Free > 0,
     ( Access == yes -> FreeA > 0 ; true ),
     ( memberchk(Code-N, Counts) -> N < MaxE ; true ).
 
-better_cohort_slot(Student, Candidate, Current, Best) :-
-    (   cohort_present(Student, Candidate)
-    ->  (   cohort_present(Student, Current)
-        ->  more_free(Candidate, Current, Best)
-        ;   Best = Candidate
-        )
-    ;   (   cohort_present(Student, Current)
-        ->  Best = Current
-        ;   more_free(Candidate, Current, Best)
-        )
+better_cohort_slot(Key, Code, CohortSize, CohortAccess,
+                   Candidate, Current, Best) :-
+    slot_cohort_score(Key, Code, CohortSize, CohortAccess,
+                      Candidate, CandidateScore),
+    slot_cohort_score(Key, Code, CohortSize, CohortAccess,
+                      Current, CurrentScore),
+    ( CandidateScore @> CurrentScore
+    -> Best = Candidate
+    ;  Best = Current
     ).
 
-cohort_present(Student, slot(_, _, _, _, _, Students)) :-
-    cohort_key(Student, Cohort),
-    member(Other, Students),
-    cohort_key(Other, Cohort),
-    !.
+% Scores are compared lexicographically: keep more cohort members together,
+% retain existing cohort members, fit the remaining block, then use a tighter
+% room fit to leave larger rooms for larger groups.
+slot_cohort_score(Key, Code, CohortSize, CohortAccess,
+                  slot(_, Free, FreeA, MaxE, Counts, Students),
+                  score(Together, Existing, WholeFit, Potential,
+                        NegAvailable)) :-
+    count_cohort(Key, Students, Existing),
+    ( memberchk(Code-ExamCount, Counts) -> true ; ExamCount = 0 ),
+    ExamRoomFree is MaxE - ExamCount,
+    Available is min(Free, ExamRoomFree),
+    AccessibleFit is min(CohortAccess, min(FreeA, Available)),
+    NormalSize is CohortSize - CohortAccess,
+    NormalFit is min(NormalSize, Available - AccessibleFit),
+    Potential is AccessibleFit + NormalFit,
+    Together is Existing + Potential,
+    ( Potential =:= CohortSize -> WholeFit = 1 ; WholeFit = 0 ),
+    NegAvailable is -Available.
 
-more_free(slot(I, F, FA, M, C, S), Acc, Best) :-
-    Acc = slot(_, AF, _, _, _, _),
-    ( F > AF -> Best = slot(I, F, FA, M, C, S) ; Best = Acc ).
+count_cohort(Key, Students, Count) :-
+    include(in_cohort(Key), Students, Cohort),
+    length(Cohort, Count).
 
 add_to_slot(RoomId, S, Access,
             [slot(RoomId, Free, FreeA, MaxE, Counts, Students) | Rest],

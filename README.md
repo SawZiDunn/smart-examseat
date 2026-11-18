@@ -171,14 +171,13 @@ assign([s(StudentId, Code) | Rest], RoomId, AccessSeats, NormalFirst,
 
 | Heuristic | Where | Why |
 |---|---|---|
-| most constrained student first | `solver.pl` | accessible students have a domain of 4 seats instead of 144, so they are placed first |
-| largest exam group first, kept contiguous | `solver.pl` | the group the separation rule squeezes hardest gets the clean columns 1, 3, 5, … and the next exam fills the gaps |
-| normal seats before accessible ones | `solver.pl` | stops ordinary students from eating the scarce accessible seats |
-| open the fewest rooms that can hold the cohort | `allocation.pl` | minimises unused seats and the number of invigilated rooms |
-| deal to the room with the most free space | `allocation.pl` | balances occupancy across the opened rooms |
-| interleave by exam, then by major | `allocation.pl` | spreads majors and guarantees every room gets a mix of exams, which is what makes the separation rule satisfiable |
+| accessible students first | `solver.pl` | students who require accessible seats get their restricted seat domain first; other students can use either seat type |
+| largest exam group first, kept contiguous | `solver.pl` | gives the group most affected by separation predictable seats; seat order is column-first |
+| open the smallest plausible room prefix | `allocation.pl` | starts with the fewest largest-first rooms that meet capacity, accessibility, and per-exam estimates |
+| maximize cohort fit, then use a tight fit | `allocation.pl` | prefers rooms that keep the most same-exam/major/year students together and preserves larger rooms for cohorts that need them |
+| group by exam, major, and year | `allocation.pl` | keeps cohorts contiguous within accessible and normal student ordering |
 | per-room cap of `Rows × ceil(Cols/2)` students per exam | `rules.pl` | the allocator can prove in advance that a room is not impossible before the solver wastes time on it |
-| bounded inference budget | `solver.pl` | a hopeless room reports `no_solution/1` instead of hanging, which triggers reallocation |
+| bounded inference budget | `solver.pl` | distinguishes an inconclusive `search_limit/1` from a proven `no_solution/1` and allows reallocation |
 
 ### 4.4 Allocation retry loop
 
