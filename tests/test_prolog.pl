@@ -177,6 +177,55 @@ test(reallocate_keeps_everyone) :-
 :- end_tests(allocation).
 
 
+:- begin_tests(cohort_allocation, [setup(use_sample_data)]).
+
+test(cohort_stays_with_its_accessible_member_when_possible) :-
+    Slots0 = [slot(r101, 20, 1, 12, [], []),
+              slot(r102, 15, 0, 9, [], [])],
+    allocation:deal([s(s0003, cs101), s(s0001, cs101)],
+                    Slots0, Slots, []),
+    memberchk(slot(r101, _, _, _, _, RoomStudents), Slots),
+    memberchk(s(s0003, cs101), RoomStudents),
+    memberchk(s(s0001, cs101), RoomStudents),
+    memberchk(slot(r102, _, _, _, _, []), Slots).
+
+test(cohort_splits_when_the_exam_room_limit_requires_it) :-
+    Slots0 = [slot(r101, 20, 1, 1, [], []),
+              slot(r102, 15, 0, 1, [], [])],
+    allocation:deal([s(s0003, cs101), s(s0001, cs101)],
+                    Slots0, Slots, []),
+    memberchk(slot(r101, _, _, _, _, [s(s0003, cs101)]), Slots),
+    memberchk(slot(r102, _, _, _, _, [s(s0001, cs101)]), Slots).
+
+test(cohort_order_is_contiguous_after_accessible_students) :-
+    Students = [s(s0001, cs101), s(s0003, cs101), s(s0005, cs101),
+                s(s0002, ma201)],
+    allocation:order_students(Students, Ordered),
+    Ordered = [s(s0003, cs101), s(s0001, cs101), s(s0005, cs101),
+               s(s0002, ma201)].
+
+:- end_tests(cohort_allocation).
+
+:- begin_tests(cohort_room_preference, [setup(use_full_data)]).
+
+test(cs302_year_three_cohort_stays_in_one_room_when_it_fits) :-
+    students_in_session(sess5, filters([], []), Students),
+    allocate_rooms(sess5, Students, Allocation),
+    findall(Id,
+            ( member(s(Id, cs302), Students),
+              user:student(Id, cs, 3, _) ),
+            Cohort),
+    length(Cohort, 50),
+    findall(Room,
+            ( member(room_group(Room, Group), Allocation),
+              member(s(Id, cs302), Group),
+              user:student(Id, cs, 3, _) ),
+            Rooms0),
+    sort(Rooms0, [_]).
+
+:- end_tests(cohort_room_preference).
+
+
 % ===========================================================================
 % B: solve_room/4
 % ===========================================================================

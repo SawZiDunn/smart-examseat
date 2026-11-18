@@ -48,6 +48,10 @@ forget_allocations :- retractall(last_allocation(_, _)).
 %  separation rule.
 target_fill(80).
 
+%! cohort_fill_limit(-Fraction) is det.
+%  Keep cohorts together until their room is close to the target fill level.
+cohort_fill_limit(0.80).
+
 
 % ===========================================================================
 % 1. Selecting the students for a session
@@ -91,11 +95,11 @@ exam_clash(StudentId, Session) :-
 %    1. open the fewest (largest-first) available rooms that can plausibly
 %       hold everyone - capacity, accessible seats, and the per-exam row
 %       limit implied by the separation rule;
-%    2. order the students so that every room receives a proportional slice
-%       of each exam and of each major (spread majors, mix exams so rows can
-%       be interleaved);
-%    3. deal them out, always to the room with the most free space, skipping
-%       rooms that cannot take that student.
+%    2. keep each exam/major/year cohort contiguous in the student order;
+%    3. prefer a room that already has members of that cohort unless doing so
+%       would make its fill level much higher than another candidate room;
+%       use free space as the tie-breaker and skip rooms that cannot take the
+%       student.
 allocate_rooms(Session, Students, Allocation) :-
     open_rooms(Students, Rooms),
     order_students(Students, Ordered),
@@ -183,65 +187,40 @@ sum_field(Rooms, Arg, Sum) :-
 % --- 2b. ordering the students --------------------------------------------
 
 %! order_students(+Students, -Ordered) is det.
-%  Accessible students come first (they are the hardest to place, and the
-%  allocator must not fill the accessible seats with anyone else by accident).
-%  The rest are interleaved exam-by-exam, and within an exam major-by-major,
-%  so a round-robin deal gives every room a proportional, well-mixed slice.
+%  Accessible students come first. Within each access group, keep students
+%  from the same exam, major, and year together for room placement.
 order_students(Students, Ordered) :-
     partition(access_student, Students, Access, Normal),
-    interleave_by(exam_key, Access, AccessMixed),
-    interleave_by(exam_key, Normal, NormalMixed0),
-    interleave_major(NormalMixed0, NormalMixed),
-    append(AccessMixed, NormalMixed, Ordered).
+    cohort_groups(Access, AccessGroups),
+    cohort_groups(Normal, NormalGroups),
+    append(AccessGroups, AccessOrdered),
+    append(NormalGroups, NormalOrdered),
+    append(AccessOrdered, NormalOrdered, Ordered).
 
-exam_key(s(_, Code), Code).
-major_key(s(StudentId, _), Major) :- rules:student_major(StudentId, Major).
+cohort_key(s(StudentId, Code), cohort(Code, Major, Year)) :-
+    rules:student_major(StudentId, Major),
+    rules:student_year(StudentId, Year).
 
-%! interleave_by(:KeyPred, +List, -Mixed) is det.
-%  Group by key, then take one element from each group in turn.
-interleave_by(KeyPred, List, Mixed) :-
-    map_key(KeyPred, List, Keyed),
+%! cohort_groups(+Students, -Groups) is det.
+%  Groups are ordered largest-first; each group is one exam/major/year cohort.
+cohort_groups(Students, Groups) :-
+    map_key(cohort_key, Students, Keyed),
     keysort(Keyed, SortedKeyed),
-    group_pairs_by_key(SortedKeyed, Groups),
-    pairs_values(Groups, Buckets),
-    round_robin(Buckets, Mixed).
+    group_pairs_by_key(SortedKeyed, Grouped),
+    pairs_values(Grouped, Cohorts),
+    map_len(Cohorts, Sized),
+    sort(1, @>=, Sized, LargestFirst),
+    pairs_values(LargestFirst, Groups).
 
 map_key(_, [], []).
 map_key(KeyPred, [X | Xs], [K-X | Ys]) :-
     call(KeyPred, X, K),
     map_key(KeyPred, Xs, Ys).
 
-%! interleave_major(+List, -Mixed) is det.
-%  Keeps the exam interleaving but rotates majors inside each exam block.
-interleave_major(List, Mixed) :-
-    map_key(major_key, List, Keyed),
-    keysort(Keyed, Sorted),
-    group_pairs_by_key(Sorted, Groups),
-    pairs_values(Groups, Buckets),
-    round_robin(Buckets, ByMajor),
-    % re-interleave by exam so both dimensions stay mixed
-    interleave_exam_stable(ByMajor, Mixed).
-
-interleave_exam_stable(List, Mixed) :-
-    map_key(exam_key, List, Keyed),
-    keysort(Keyed, Sorted),
-    group_pairs_by_key(Sorted, Groups),
-    pairs_values(Groups, Buckets),
-    round_robin(Buckets, Mixed).
-
-%! round_robin(+Buckets, -Flat) is det.
-round_robin([], []) :- !.
-round_robin(Buckets, Flat) :-
-    take_heads(Buckets, Heads, Tails),
-    round_robin(Tails, Rest),
-    append(Heads, Rest, Flat).
-
-take_heads([], [], []).
-take_heads([[] | Bs], Hs, Ts) :- !,
-    take_heads(Bs, Hs, Ts).
-take_heads([[H | T] | Bs], [H | Hs], Ts0) :-
-    take_heads(Bs, Hs, Ts),
-    ( T == [] -> Ts0 = Ts ; Ts0 = [T | Ts] ).
+map_len([], []).
+map_len([L | Ls], [N-L | T]) :-
+    length(L, N),
+    map_len(Ls, T).
 
 
 % --- 2c. dealing students into rooms --------------------------------------
@@ -265,22 +244,54 @@ deal([S | Rest], Slots0, Slots, Unplaced) :-
     ).
 
 %! place(+Student, +Slots0, -Slots) is semidet.
-%  Pick the room with the most free space that can legally take this student.
+%  Prefer the student's cohort room, subject to fill level and room limits.
 place(s(StudentId, Code), Slots0, Slots) :-
     (   rules:needs_accessible(StudentId) -> Access = yes ; Access = no ),
-    best_slot(Slots0, Access, Code, Best),
+    Student = s(StudentId, Code),
+    best_slot(Slots0, Access, Student, Best),
     Best = slot(RoomId, _, _, _, _, _),
-    add_to_slot(RoomId, s(StudentId, Code), Access, Slots0, Slots).
+    add_to_slot(RoomId, Student, Access, Slots0, Slots).
 
-best_slot(Slots, Access, Code, Best) :-
+best_slot(Slots, Access, Student, Best) :-
+    Student = s(_, Code),
     include(can_take(Access, Code), Slots, Candidates),
     Candidates = [First | _],
-    foldl(more_free, Candidates, First, Best).
+    foldl(better_cohort_slot(Student), Candidates, First, Best).
 
 can_take(Access, Code, slot(_, Free, FreeA, MaxE, Counts, _)) :-
     Free > 0,
     ( Access == yes -> FreeA > 0 ; true ),
     ( memberchk(Code-N, Counts) -> N < MaxE ; true ).
+
+better_cohort_slot(Student, Candidate, Current, Best) :-
+    (   cohort_present(Student, Candidate)
+    ->  (   cohort_present(Student, Current)
+        ->  more_free(Candidate, Current, Best)
+        ;   room_fill(Candidate, CandidateFill),
+            cohort_fill_limit(FillLimit),
+            ( CandidateFill =< FillLimit
+            -> Best = Candidate
+            ;  more_free(Candidate, Current, Best) )
+        )
+    ;   (   cohort_present(Student, Current)
+        ->  room_fill(Current, CurrentFill),
+            cohort_fill_limit(FillLimit),
+            ( CurrentFill =< FillLimit
+            -> Best = Current
+            ;  more_free(Candidate, Current, Best) )
+        ;   more_free(Candidate, Current, Best)
+        )
+    ).
+
+cohort_present(Student, slot(_, _, _, _, _, Students)) :-
+    cohort_key(Student, Cohort),
+    member(Other, Students),
+    cohort_key(Other, Cohort),
+    !.
+
+room_fill(slot(RoomId, Free, _, _, _, _), Fill) :-
+    rules:room_capacity(RoomId, Capacity),
+    Fill is (Capacity - Free) / Capacity.
 
 more_free(slot(I, F, FA, M, C, S), Acc, Best) :-
     Acc = slot(_, AF, _, _, _, _),
