@@ -14,8 +14,7 @@
 %
 % Search: depth-first backtracking over students, with
 %   - variable ordering  : most constrained student first
-%   - value ordering     : row-major, and normal seats before accessible ones
-%                          for students who do not need an accessible seat
+%   - value ordering     : earliest remaining seat in column-major order
 %   - an inference limit so a hopeless room reports failure instead of hanging
 % ===========================================================================
 
@@ -32,8 +31,8 @@
 
 %! inference_budget(+NStudents, -Limit) is det.
 %  Backtracking is exponential in the worst case. Rather than hang on an
-%  impossible room we bound the work and report no_solution/1, which lets
-%  Member A's reallocate/4 move students out and try again.
+%  difficult room we bound the work and report search_limit/1 separately from
+%  a proven no_solution/1.
 inference_budget(N, Limit) :-
     Limit is 200_000 + N * 20_000.
 
@@ -51,6 +50,8 @@ inference_budget(N, Limit) :-
 %  Reason   = not_enough_seats(RoomId, Needed, Have)
 %           | not_enough_accessible(RoomId, Needed, Have)
 %           | no_solution(RoomId)
+%           | search_limit(RoomId)
+%           | search_error(RoomId)
 solve_room(Session, RoomId, Students, Result) :-
     solve_room(Session, RoomId, Students, Result, []).
 
@@ -81,9 +82,20 @@ precheck(RoomId, Students, Problem) :-
         rules:room_accessible_capacity(RoomId, HaveA),
         NeedA > HaveA,
         Problem = not_enough_accessible(RoomId, NeedA, HaveA)
+    ;   exam_exceeds_room_limit(RoomId, Students)
+    ->  Problem = no_solution(RoomId)
     ).
 
 needs_access(s(StudentId, _)) :- rules:needs_accessible(StudentId).
+
+exam_exceeds_room_limit(RoomId, Students) :-
+    rules:max_same_exam_per_room(RoomId, Limit),
+    findall(Code, member(s(_, Code), Students), Codes),
+    sort(Codes, UniqueCodes),
+    member(Code, UniqueCodes),
+    aggregate_all(count, member(s(_, Code), Students), Count),
+    Count > Limit,
+    !.
 
 
 % ---------------------------------------------------------------------------
@@ -92,25 +104,25 @@ needs_access(s(StudentId, _)) :- rules:needs_accessible(StudentId).
 
 search(RoomId, Students, Result, Options) :-
     rules:room_seats(RoomId, AllSeats),
-    partition(is_accessible_seat, AllSeats, AccessSeats, NormalSeats),
-    % value ordering: a student who does not need an accessible seat tries
-    % the normal seats first, so the scarce accessible seats stay free.
-    append(NormalSeats, AccessSeats, NormalFirst),
+    include(is_accessible_seat, AllSeats, AccessSeats),
     order_students(Students, Ordered),
     length(Students, N),
     ( memberchk(budget(B), Options) -> Limit = B ; inference_budget(N, Limit) ),
+    search_with_budget(RoomId, Ordered, AccessSeats, AllSeats, Limit, Result).
+
+search_with_budget(RoomId, Ordered, AccessSeats, AllSeats, Limit, Result) :-
     empty_assoc(Used0),
     empty_assoc(Rows0),
     (   catch(
             call_with_inference_limit(
-                assign(Ordered, RoomId, AccessSeats, NormalFirst,
+                assign(Ordered, RoomId, AccessSeats, AllSeats,
                        Used0, Rows0, [], Rev),
                 Limit, Outcome),
             _Error, (Outcome = exception, Rev = []))
     ->  (   Outcome == inference_limit_exceeded
-        ->  Result = failed(no_solution(RoomId))
+        ->  Result = failed(search_limit(RoomId))
         ;   Outcome == exception
-        ->  Result = failed(no_solution(RoomId))
+        ->  Result = failed(search_error(RoomId))
         ;   reverse(Rev, Assignments),
             Result = ok(Assignments)
         )
@@ -119,16 +131,16 @@ search(RoomId, Students, Result, Options) :-
 
 is_accessible_seat(seat(_, _, accessible)).
 
-%! assign(+Students, +RoomId, +AccessSeats, +NormalFirstSeats,
+%! assign(+Students, +RoomId, +AccessSeats, +AllSeats,
 %!        +UsedSeats, +ExamRowCols, +Acc, -Assignments) is nondet.
 %
 %  This is the backtracking core. Each recursive step picks one seat for the
 %  head student with member/2; if a later student cannot be placed, Prolog
 %  backtracks into that member/2 and tries the next seat automatically.
 assign([], _, _, _, _, _, Acc, Acc).
-assign([s(StudentId, Code) | Rest], RoomId, AccessSeats, NormalFirst,
+assign([s(StudentId, Code) | Rest], RoomId, AccessSeats, AllSeats,
        Used, Rows, Acc, Out) :-
-    domain(StudentId, AccessSeats, NormalFirst, Domain),
+    domain(StudentId, AccessSeats, AllSeats, Domain),
     member(seat(Row, Col, Type), Domain),
     \+ get_assoc(Row-Col, Used, _),                      % seat_unique
     rules:seat_fits(StudentId, Type),                    % accessibility
@@ -136,16 +148,17 @@ assign([s(StudentId, Code) | Rest], RoomId, AccessSeats, NormalFirst,
     rules:separation_ok(Row, Col, Cols),                 % separation
     put_assoc(Row-Col, Used, used, Used1),
     put_assoc(Code-Row, Rows, [Col | Cols], Rows1),
-    assign(Rest, RoomId, AccessSeats, NormalFirst, Used1, Rows1,
+    assign(Rest, RoomId, AccessSeats, AllSeats, Used1, Rows1,
            [assign(StudentId, Code, RoomId, Row, Col) | Acc], Out).
 
-%! domain(+StudentId, +AccessSeats, +NormalFirst, -Domain) is det.
+%! domain(+StudentId, +AccessSeats, +AllSeats, -Domain) is det.
 %  A student who needs accessibility has only the accessible seats in their
-%  domain - that is what makes them "most constrained".
-domain(StudentId, AccessSeats, NormalFirst, Domain) :-
+%  domain. Everyone else can use the earliest remaining seat; accessible-seat
+%  students are ordered first so their required seats are assigned beforehand.
+domain(StudentId, AccessSeats, AllSeats, Domain) :-
     (   rules:needs_accessible(StudentId)
     ->  Domain = AccessSeats
-    ;   Domain = NormalFirst
+    ;   Domain = AllSeats
     ).
 
 exam_row_cols(Code, Row, Rows, Cols) :-

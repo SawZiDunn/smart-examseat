@@ -107,6 +107,12 @@ class TestResultParser(unittest.TestCase):
         self.assertEqual(reason["kind"], "no_solution")
         self.assertEqual(reason["room"], "r103")
 
+    def test_failed_search_limit_is_not_no_solution(self):
+        _, reason = parse_result("failed(search_limit(r103))")
+        self.assertEqual(reason["kind"], "search_limit")
+        self.assertEqual(reason["room"], "r103")
+        self.assertIn("may still be feasible", reason["message"])
+
     def test_rejects_other_functors(self):
         with self.assertRaises(PrologError):
             parse_result("maybe([])")
@@ -209,6 +215,15 @@ class TestGeneration(unittest.TestCase):
     def test_assignments_carry_names(self):
         report = ENGINE.generate("sess13")
         self.assertTrue(all(a.name for a in report["assignments"]))
+
+    def test_assignments_carry_accessibility_requirement(self):
+        report = ENGINE.generate("sess1")
+        self.assertTrue(report["ok"])
+        self.assertTrue(all(isinstance(a.needs_accessible, bool)
+                            for a in report["assignments"]))
+        self.assertTrue(any(a.needs_accessible for a in report["assignments"]))
+        self.assertTrue(any(not a.needs_accessible
+                            for a in report["assignments"]))
 
     def test_raw_route_agrees_with_json_route(self):
         status, rows = ENGINE.generate_raw("sess13")

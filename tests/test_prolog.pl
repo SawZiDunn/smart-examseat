@@ -141,16 +141,13 @@ test(same_exam_count_respects_the_row_limit) :-
              msort(Codes, Sorted), clumped(Sorted, Counts),
              forall(member(_-N, Counts), N =< Limit) )).
 
-test(rooms_are_balanced) :-
-    % no open room should hold more than twice the average share of seats
-    allocation_for(sess4, _, Allocation),
-    findall(Ratio,
-            ( member(room_group(RoomId, G), Allocation),
-              length(G, N), room_capacity(RoomId, Cap),
-              Ratio is N / Cap ),
-            Ratios),
-    max_list(Ratios, Max), min_list(Ratios, Min),
-    Max - Min < 0.35.
+test(opens_no_room_beyond_the_first_sufficient_prefix) :-
+    allocation_for(sess4, Students, _),
+    once(allocation:open_rooms(Students, Rooms)),
+    allocation:demand(Students, Total, AccessNeeded, ExamCounts),
+    append(Prefix, [_Last], Rooms),
+    \+ allocation:enough(Prefix, Total, AccessNeeded, ExamCounts),
+    !.
 
 test(students_for_room_reads_back_the_allocation) :-
     allocation_for(sess4, _, Allocation),
@@ -161,20 +158,93 @@ test(students_for_room_reads_back_the_allocation) :-
 test(reallocate_moves_students_out_of_the_failed_room) :-
     allocation_for(sess4, _, Allocation),
     Allocation = [room_group(RoomId, Students) | _],
+    length(Allocation, BeforeRooms),
     length(Students, Before),
-    reallocate(sess4, RoomId, no_solution(RoomId), New),
+    once(reallocate(sess4, RoomId, no_solution(RoomId), New)),
+    length(New, AfterRooms),
+    AfterRooms =< BeforeRooms,
     ( memberchk(room_group(RoomId, Kept), New) -> length(Kept, After) ; After = 0 ),
     After < Before.
+
+test(reallocation_uses_open_capacity_before_opening_a_room) :-
+    Slots0 = [slot(r102, 2, 0, 9, [], [])],
+    allocation:reallocate_victims(
+        no_solution(r101), r101, [s(s0001, cs101)], Slots0, Slots),
+    Slots == [slot(r102, 1, 0, 9, [cs101-1], [s(s0001, cs101)])].
 
 test(reallocate_keeps_everyone) :-
     allocation_for(sess4, Students, Allocation),
     Allocation = [room_group(RoomId, _) | _],
-    reallocate(sess4, RoomId, no_solution(RoomId), New),
+    once(reallocate(sess4, RoomId, no_solution(RoomId), New)),
     findall(S, ( member(room_group(_, G), New), member(S, G) ), Placed),
     msort(Placed, A), msort(Students, B),
     A == B.
 
 :- end_tests(allocation).
+
+
+:- begin_tests(cohort_allocation, [setup(use_sample_data)]).
+
+test(cohort_stays_with_its_accessible_member_when_possible) :-
+    Slots0 = [slot(r101, 20, 1, 12, [], []),
+              slot(r102, 15, 0, 9, [], [])],
+    allocation:deal([s(s0003, cs101), s(s0001, cs101)],
+                    Slots0, Slots, []),
+    memberchk(slot(r101, _, _, _, _, RoomStudents), Slots),
+    memberchk(s(s0003, cs101), RoomStudents),
+    memberchk(s(s0001, cs101), RoomStudents),
+    memberchk(slot(r102, _, _, _, _, []), Slots).
+
+test(cohort_splits_when_the_exam_room_limit_requires_it) :-
+    Slots0 = [slot(r101, 20, 1, 1, [], []),
+              slot(r102, 15, 0, 1, [], [])],
+    allocation:deal([s(s0003, cs101), s(s0001, cs101)],
+                    Slots0, Slots, []),
+    memberchk(slot(r101, _, _, _, _, [s(s0003, cs101)]), Slots),
+    memberchk(slot(r102, _, _, _, _, [s(s0001, cs101)]), Slots).
+
+test(cohort_order_is_contiguous_after_accessible_students) :-
+    Students = [s(s0001, cs101), s(s0003, cs101), s(s0005, cs101),
+                s(s0002, ma201)],
+    allocation:order_students(Students, Ordered),
+    Ordered = [s(s0003, cs101), s(s0001, cs101), s(s0005, cs101),
+               s(s0002, ma201)].
+
+test(sample_session_uses_one_room_at_full_capacity) :-
+    students_in_session(sess1, filters([], []), Students),
+    allocation:open_rooms(Students, [spec(r101, 20, 2, 12)]).
+
+test(uses_one_room_when_capacity_and_exam_limits_allow) :-
+    Rooms = [spec(r12, 144, 12, 72), spec(r13, 144, 12, 72)],
+    allocation:grow_prefix(Rooms, 135, 0,
+                           [cs302-68, ma201-67], [], Chosen),
+    Chosen = [spec(r12, 144, 12, 72)].
+
+test(uses_two_rooms_when_one_exam_exceeds_room_limit) :-
+    Rooms = [spec(r12, 144, 12, 72), spec(r13, 144, 12, 72)],
+    allocation:grow_prefix(Rooms, 135, 0, [cs302-135], [], Chosen),
+    Chosen = Rooms.
+
+:- end_tests(cohort_allocation).
+
+:- begin_tests(cohort_room_preference, [setup(use_full_data)]).
+
+test(cs302_year_three_cohort_stays_in_one_room_when_it_fits) :-
+    students_in_session(sess5, filters([], []), Students),
+    allocate_rooms(sess5, Students, Allocation),
+    findall(Id,
+            ( member(s(Id, cs302), Students),
+              user:student(Id, cs, 3, _) ),
+            Cohort),
+    length(Cohort, 50),
+    findall(Room,
+            ( member(room_group(Room, Group), Allocation),
+              member(s(Id, cs302), Group),
+              user:student(Id, cs, 3, _) ),
+            Rooms0),
+    sort(Rooms0, [_]).
+
+:- end_tests(cohort_room_preference).
 
 
 % ===========================================================================
@@ -214,6 +284,12 @@ test(accessible_students_get_accessible_seats) :-
     forall(member(assign(Id, _, Room, R, C), As),
            ( needs_accessible(Id) -> user:seat(Room, R, C, accessible) ; true )).
 
+test(normal_students_use_earliest_column_major_seats) :-
+    solve_room(sess1, r101,
+               [s(s0001, cs101), s(s0005, cs101)], ok(As)),
+    memberchk(assign(s0001, cs101, r101, 1, 1), As),
+    memberchk(assign(s0005, cs101, r101, 2, 1), As).
+
 test(separation_is_respected) :-
     students_in_session(sess1, filters([], []), Students),
     solve_room(sess1, r101, Students, Result),
@@ -250,6 +326,10 @@ test(reports_no_solution_when_separation_cannot_hold) :-
     forall(member(s(Id, _), Students),
            retractall(user:student(Id, _, _, _))),
     Result = failed(no_solution(r102)).
+
+test(reports_search_limit_separately) :-
+    solve_room(sess1, r101, [s(s0001, cs101)], Result, [budget(1)]),
+    Result = failed(search_limit(r101)).
 
 fake_id(N, Id) :- format(atom(Id), 'f~w', [N]).
 
@@ -382,6 +462,12 @@ test(every_session_solves_and_validates) :-
                 -> true
                 ; format(user_error, '~w invalid: ~q~n', [S, Report]), fail )
              ; format(user_error, '~w failed: ~q~n', [S, Result]), fail ) )).
+
+test(sess1_reuses_existing_rooms_after_search_limits) :-
+    generate_seating(sess1, filters([], []), ok(As),
+                     stats(585, 6, Retries, _)),
+    Retries > 0,
+    validate_seating(sess1, filters([], []), As, valid).
 
 test(a_filtered_run_validates) :-
     generate_seating(sess2, filters([1, 2], [se, cs]), ok(As)),

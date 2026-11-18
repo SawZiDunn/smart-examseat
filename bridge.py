@@ -46,6 +46,7 @@ class Assignment:
     name: str = ""
     major: str = ""
     year: int = 0
+    needs_accessible: bool = False
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -239,6 +240,15 @@ def reason_to_dict(reason) -> dict:
         return {"kind": kind, "room": str(room),
                 "message": (f"No seating for room {room} satisfies every "
                             f"constraint, even after reallocation.")}
+    if kind == "search_limit":
+        room = args[0]
+        return {"kind": kind, "room": str(room),
+                "message": (f"Seating search for room {room} reached its work "
+                            f"limit; the room may still be feasible.")}
+    if kind == "search_error":
+        room = args[0]
+        return {"kind": kind, "room": str(room),
+                "message": f"Seating search failed unexpectedly in room {room}."}
     return {"kind": kind, "message": repr(reason)}
 
 
@@ -363,7 +373,8 @@ class SeatingEngine:
                     student=row["student"], exam=row["exam"], room=row["room"],
                     row=int(row["row"]), col=int(row["col"]),
                     name=row.get("name", ""), major=row.get("major", ""),
-                    year=int(row.get("year", 0) or 0)))
+                    year=int(row.get("year", 0) or 0),
+                    needs_accessible=row.get("needs_accessible", False)))
 
         rooms: dict = {}
         for a in assignments:

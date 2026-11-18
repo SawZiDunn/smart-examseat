@@ -17,6 +17,7 @@
         allocate_rooms/3,
         students_for_room/3,
         reallocate/4,
+        reallocate_with_extra_room/4,
         forget_allocations/0,
         list_sessions/1,
         list_majors/1,
@@ -41,13 +42,6 @@
 %! forget_allocations is det.
 %  Drops the cached allocations; called when the dataset is reloaded.
 forget_allocations :- retractall(last_allocation(_, _)).
-
-%! target_fill(-Percent)
-%  The allocator only opens enough rooms to fill them to roughly this level.
-%  The remaining headroom is what gives the seat solver room to honour the
-%  separation rule.
-target_fill(80).
-
 
 % ===========================================================================
 % 1. Selecting the students for a session
@@ -91,20 +85,17 @@ exam_clash(StudentId, Session) :-
 %    1. open the fewest (largest-first) available rooms that can plausibly
 %       hold everyone - capacity, accessible seats, and the per-exam row
 %       limit implied by the separation rule;
-%    2. order the students so that every room receives a proportional slice
-%       of each exam and of each major (spread majors, mix exams so rows can
-%       be interleaved);
-%    3. deal them out, always to the room with the most free space, skipping
-%       rooms that cannot take that student.
+%    2. keep each exam/major/year cohort contiguous in the student order;
+%    3. keep cohort members in the same room until its hard limits prevent
+%       that; use free space as the tie-breaker when there is no cohort room.
 allocate_rooms(Session, Students, Allocation) :-
     open_rooms(Students, Rooms),
     order_students(Students, Ordered),
     empty_rooms(Rooms, Slots0),
     deal(Ordered, Slots0, Slots1, Unplaced),
     % Never drop a student. Anyone the rooms cannot take goes into the
-    % biggest room anyway, so the solver fails that room with the precise
-    % reason (not_enough_seats / not_enough_accessible / no_solution) and
-    % generate_seating/3 retries or reports failed(Reason).
+    % biggest room anyway, so the solver reports the precise capacity,
+    % feasibility, or search-limit reason for reallocation.
     overflow_into_first(Unplaced, Slots1, Slots),
     slots_to_allocation(Slots, Allocation),
     retractall(last_allocation(Session, _)),
@@ -170,8 +161,7 @@ enough(Rooms, Total, AccessNeeded, ExamCounts) :-
     sum_field(Rooms, 2, Cap),
     sum_field(Rooms, 3, ACap),
     sum_field(Rooms, 4, MaxE),
-    target_fill(Fill),
-    Cap * Fill >= Total * 100,
+    Cap >= Total,
     ACap >= AccessNeeded,
     forall(member(_-N, ExamCounts), MaxE >= N).
 
@@ -183,65 +173,40 @@ sum_field(Rooms, Arg, Sum) :-
 % --- 2b. ordering the students --------------------------------------------
 
 %! order_students(+Students, -Ordered) is det.
-%  Accessible students come first (they are the hardest to place, and the
-%  allocator must not fill the accessible seats with anyone else by accident).
-%  The rest are interleaved exam-by-exam, and within an exam major-by-major,
-%  so a round-robin deal gives every room a proportional, well-mixed slice.
+%  Accessible students come first. Within each access group, keep students
+%  from the same exam, major, and year together for room placement.
 order_students(Students, Ordered) :-
     partition(access_student, Students, Access, Normal),
-    interleave_by(exam_key, Access, AccessMixed),
-    interleave_by(exam_key, Normal, NormalMixed0),
-    interleave_major(NormalMixed0, NormalMixed),
-    append(AccessMixed, NormalMixed, Ordered).
+    cohort_groups(Access, AccessGroups),
+    cohort_groups(Normal, NormalGroups),
+    append(AccessGroups, AccessOrdered),
+    append(NormalGroups, NormalOrdered),
+    append(AccessOrdered, NormalOrdered, Ordered).
 
-exam_key(s(_, Code), Code).
-major_key(s(StudentId, _), Major) :- rules:student_major(StudentId, Major).
+cohort_key(s(StudentId, Code), cohort(Code, Major, Year)) :-
+    rules:student_major(StudentId, Major),
+    rules:student_year(StudentId, Year).
 
-%! interleave_by(:KeyPred, +List, -Mixed) is det.
-%  Group by key, then take one element from each group in turn.
-interleave_by(KeyPred, List, Mixed) :-
-    map_key(KeyPred, List, Keyed),
+%! cohort_groups(+Students, -Groups) is det.
+%  Groups are ordered largest-first; each group is one exam/major/year cohort.
+cohort_groups(Students, Groups) :-
+    map_key(cohort_key, Students, Keyed),
     keysort(Keyed, SortedKeyed),
-    group_pairs_by_key(SortedKeyed, Groups),
-    pairs_values(Groups, Buckets),
-    round_robin(Buckets, Mixed).
+    group_pairs_by_key(SortedKeyed, Grouped),
+    pairs_values(Grouped, Cohorts),
+    map_len(Cohorts, Sized),
+    sort(1, @>=, Sized, LargestFirst),
+    pairs_values(LargestFirst, Groups).
 
 map_key(_, [], []).
 map_key(KeyPred, [X | Xs], [K-X | Ys]) :-
     call(KeyPred, X, K),
     map_key(KeyPred, Xs, Ys).
 
-%! interleave_major(+List, -Mixed) is det.
-%  Keeps the exam interleaving but rotates majors inside each exam block.
-interleave_major(List, Mixed) :-
-    map_key(major_key, List, Keyed),
-    keysort(Keyed, Sorted),
-    group_pairs_by_key(Sorted, Groups),
-    pairs_values(Groups, Buckets),
-    round_robin(Buckets, ByMajor),
-    % re-interleave by exam so both dimensions stay mixed
-    interleave_exam_stable(ByMajor, Mixed).
-
-interleave_exam_stable(List, Mixed) :-
-    map_key(exam_key, List, Keyed),
-    keysort(Keyed, Sorted),
-    group_pairs_by_key(Sorted, Groups),
-    pairs_values(Groups, Buckets),
-    round_robin(Buckets, Mixed).
-
-%! round_robin(+Buckets, -Flat) is det.
-round_robin([], []) :- !.
-round_robin(Buckets, Flat) :-
-    take_heads(Buckets, Heads, Tails),
-    round_robin(Tails, Rest),
-    append(Heads, Rest, Flat).
-
-take_heads([], [], []).
-take_heads([[] | Bs], Hs, Ts) :- !,
-    take_heads(Bs, Hs, Ts).
-take_heads([[H | T] | Bs], [H | Hs], Ts0) :-
-    take_heads(Bs, Hs, Ts),
-    ( T == [] -> Ts0 = Ts ; Ts0 = [T | Ts] ).
+map_len([], []).
+map_len([L | Ls], [N-L | T]) :-
+    length(L, N),
+    map_len(Ls, T).
 
 
 % --- 2c. dealing students into rooms --------------------------------------
@@ -265,22 +230,42 @@ deal([S | Rest], Slots0, Slots, Unplaced) :-
     ).
 
 %! place(+Student, +Slots0, -Slots) is semidet.
-%  Pick the room with the most free space that can legally take this student.
+%  Prefer the student's cohort room, subject to hard room limits.
 place(s(StudentId, Code), Slots0, Slots) :-
     (   rules:needs_accessible(StudentId) -> Access = yes ; Access = no ),
-    best_slot(Slots0, Access, Code, Best),
+    Student = s(StudentId, Code),
+    best_slot(Slots0, Access, Student, Best),
     Best = slot(RoomId, _, _, _, _, _),
-    add_to_slot(RoomId, s(StudentId, Code), Access, Slots0, Slots).
+    add_to_slot(RoomId, Student, Access, Slots0, Slots).
 
-best_slot(Slots, Access, Code, Best) :-
+best_slot(Slots, Access, Student, Best) :-
+    Student = s(_, Code),
     include(can_take(Access, Code), Slots, Candidates),
     Candidates = [First | _],
-    foldl(more_free, Candidates, First, Best).
+    foldl(better_cohort_slot(Student), Candidates, First, Best).
 
 can_take(Access, Code, slot(_, Free, FreeA, MaxE, Counts, _)) :-
     Free > 0,
     ( Access == yes -> FreeA > 0 ; true ),
     ( memberchk(Code-N, Counts) -> N < MaxE ; true ).
+
+better_cohort_slot(Student, Candidate, Current, Best) :-
+    (   cohort_present(Student, Candidate)
+    ->  (   cohort_present(Student, Current)
+        ->  more_free(Candidate, Current, Best)
+        ;   Best = Candidate
+        )
+    ;   (   cohort_present(Student, Current)
+        ->  Best = Current
+        ;   more_free(Candidate, Current, Best)
+        )
+    ).
+
+cohort_present(Student, slot(_, _, _, _, _, Students)) :-
+    cohort_key(Student, Cohort),
+    member(Other, Students),
+    cohort_key(Other, Cohort),
+    !.
 
 more_free(slot(I, F, FA, M, C, S), Acc, Best) :-
     Acc = slot(_, AF, _, _, _, _),
@@ -327,8 +312,7 @@ slots_to_allocation([slot(RoomId, _, _, _, _, Rev) | Rest],
 %! reallocate(+Session, +FailedRoomId, +Reason, -NewAllocation) is semidet.
 %
 %  Moves students out of the room the solver could not satisfy and spreads
-%  them over the other open rooms; if there is nowhere to put them, a closed
-%  (i.e. not yet opened) available room is brought online.
+%  them to other rooms with available capacity before opening an unused room.
 %
 %  Fails when nothing can be moved - that is the signal for generate_seating/3
 %  to give up rather than loop.
@@ -341,13 +325,29 @@ reallocate(Session, FailedRoomId, Reason, NewAllocation) :-
     pick_victims(Reason, Students, ToMove, Victims, Keepers),
     Victims \== [],
     rebuild_slots(OtherGroups, FailedRoomId, Slots0),
-    deal(Victims, Slots0, Slots1, Unplaced),
-    (   Unplaced == []
-    ->  Slots2 = Slots1
-    ;   open_extra_room(FailedRoomId, Slots1, Slots1b),
-        deal(Unplaced, Slots1b, Slots2, [])
-    ),
-    slots_to_allocation(Slots2, Rest),
+    reallocate_victims(Reason, FailedRoomId, Victims, Slots0, Slots2),
+    finish_reallocation(Session, FailedRoomId, Keepers, Slots2, NewAllocation).
+
+%! reallocate_with_extra_room(+Session, +FailedRoomId, +Reason, -NewAllocation)
+%  Final fallback after capacity-first retries have not resolved the failure.
+reallocate_with_extra_room(Session, FailedRoomId, Reason, NewAllocation) :-
+    last_allocation(Session, Allocation),
+    select(room_group(FailedRoomId, Students), Allocation, OtherGroups),
+    length(Students, Count),
+    offload_count(Reason, Count, Students, ToMove),
+    ToMove > 0,
+    pick_victims(Reason, Students, ToMove, Victims, Keepers),
+    Victims \== [],
+    rebuild_slots(OtherGroups, FailedRoomId, Slots0),
+    open_extra_room(FailedRoomId, Slots0, [Extra | _]),
+    deal(Victims, [Extra], [ExtraPlaced], UnplacedExtra),
+    deal(UnplacedExtra, Slots0, OtherSlots, Unplaced),
+    append([ExtraPlaced], OtherSlots, Slots1),
+    deal_overflow(Unplaced, FailedRoomId, Slots1, Slots2),
+    finish_reallocation(Session, FailedRoomId, Keepers, Slots2, NewAllocation).
+
+finish_reallocation(Session, FailedRoomId, Keepers, Slots, NewAllocation) :-
+    slots_to_allocation(Slots, Rest),
     (   Keepers == []
     ->  NewAllocation = Rest
     ;   NewAllocation = [room_group(FailedRoomId, Keepers) | Rest]
@@ -356,15 +356,26 @@ reallocate(Session, FailedRoomId, Reason, NewAllocation) :-
     assertz(last_allocation(Session, NewAllocation)),
     !.
 
+reallocate_victims(_, FailedRoomId, Victims, Slots0, Slots) :-
+    deal(Victims, Slots0, Slots1, Unplaced),
+    deal_overflow(Unplaced, FailedRoomId, Slots1, Slots).
+
+deal_overflow([], _, Slots, Slots) :- !.
+deal_overflow(Unplaced, FailedRoomId, Slots0, Slots) :-
+    open_extra_room(FailedRoomId, Slots0, Slots1),
+    deal(Unplaced, Slots1, Slots, []).
+
 %! offload_count(+Reason, +Count, +Students, -ToMove) is det.
 offload_count(not_enough_seats(_, Needed, Have), _, _, ToMove) :- !,
     ToMove is max(1, Needed - Have).
 offload_count(not_enough_accessible(_, Needed, Have), _, _, ToMove) :- !,
     ToMove is max(1, Needed - Have).
 offload_count(no_solution(_), Count, _, ToMove) :- !,
-    % Loosen the room by a fifth; that is usually enough to make the
-    % separation constraint satisfiable again.
-    ToMove is max(1, (Count + 4) // 5).
+    ToMove is max(1, (Count + 2) // 3).
+offload_count(search_limit(_), Count, _, ToMove) :- !,
+    % A smaller group reduces search complexity without assuming the room is
+    % impossible or immediately consuming another room.
+    ToMove is max(1, (Count + 2) // 3).
 offload_count(_, Count, _, ToMove) :-
     ToMove is max(1, (Count + 4) // 5).
 

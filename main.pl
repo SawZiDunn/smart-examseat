@@ -130,6 +130,12 @@ solve_all_with_retry(Session, Allocation, Budget, Used, Result, Retries, NRooms)
             Used1 is Used + 1,
             solve_all_with_retry(Session, NewAllocation, Budget1, Used1,
                                  Result, Retries, NRooms)
+        ;   Budget =:= 0,
+            reallocate_with_extra_room(Session, FailedRoom, Reason,
+                                       NewAllocation)
+        ->  Used1 is Used + 1,
+            solve_all_with_retry(Session, NewAllocation, 0, Used1,
+                                 Result, Retries, NRooms)
         ;   Result = failed(Reason), Retries = Used, NRooms = 0
         )
     ).
@@ -228,13 +234,19 @@ seating_report_json(Session, Filters, Json) :-
 
 result_dict(ok(Assignments), _{ status: "ok", assignments: List }) :- !,
     findall(_{ student: S, name: Name, major: Major, year: Year,
-               exam: E, room: R, row: Row, col: Col },
+               exam: E, room: R, row: Row, col: Col,
+               needs_accessible: NeedsAccessible },
             ( member(assign(S, E, R, Row, Col), Assignments),
-              student_fields(S, Name, Major, Year) ),
+              student_fields(S, Name, Major, Year),
+              student_access_need(S, NeedsAccessible) ),
             List).
 result_dict(failed(Reason), _{ status: "failed", reason: Text, detail: Detail }) :-
     term_string(Reason, Text),
     reason_detail(Reason, Detail).
+
+student_access_need(StudentId, true) :-
+    rules:needs_accessible(StudentId), !.
+student_access_need(_, false).
 
 student_fields(S, Name, Major, Year) :-
     (   student_display(S, Name0, Major0, Year0)
@@ -250,6 +262,12 @@ reason_detail(not_enough_accessible(Room, Needed, Have),
                  needed: Needed, have: Have }) :- !.
 reason_detail(no_solution(Room),
               _{ kind: "no_solution", room: Room }) :- !.
+reason_detail(search_limit(Room),
+              _{ kind: "search_limit", room: Room,
+                 message: "Seating search reached its work limit; the room may still be feasible." }) :- !.
+reason_detail(search_error(Room),
+              _{ kind: "search_error", room: Room,
+                 message: "Seating search failed unexpectedly." }) :- !.
 reason_detail(_, _{ kind: "other" }).
 
 report_dict(valid, _{ status: "valid", violations: [] }) :- !.

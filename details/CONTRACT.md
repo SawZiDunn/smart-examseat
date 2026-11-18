@@ -108,12 +108,14 @@ solve_room(+Session, +RoomId, +Students, -Result).
 not_enough_seats(RoomId, Needed, Have)
 not_enough_accessible(RoomId, Needed, Have)
 no_solution(RoomId)
+search_limit(RoomId)
 ```
 
 ```prolog
 % Main entry point. Calls A's students_in_session and allocate_rooms,
 % runs solve_room for every room, retries failed rooms through reallocate/4
-% (max 3 retries), collects all assignments.
+% (max_retries/1 capacity-first attempts, then room fallback), collects all
+% assignments. Further room additions stop when no unused room remains.
 % Result = ok(Assignments) | failed(Reason)
 generate_seating(+Session, +Filters, -Result).
 ```
@@ -133,7 +135,7 @@ room_layout(+RoomId, -Rows, -Cols, -Seats).   % Seats = [seat(Row, Col, SeatType
 
 ```prolog
 min_separation(1).     % same-exam students need >= 1 empty seat between them in the same row
-max_retries(3).        % reallocation attempts per failed room
+max_retries(3).        % capacity-first reallocations before room fallback
 ```
 
 Defined in `rules.pl`. Meaning: two students of the same exam in the same row must have a column distance of at least `min_separation + 1`.
