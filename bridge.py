@@ -46,6 +46,7 @@ class Assignment:
     name: str = ""
     major: str = ""
     year: int = 0
+    needs_accessible: bool = False
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -363,7 +364,8 @@ class SeatingEngine:
                     student=row["student"], exam=row["exam"], room=row["room"],
                     row=int(row["row"]), col=int(row["col"]),
                     name=row.get("name", ""), major=row.get("major", ""),
-                    year=int(row.get("year", 0) or 0)))
+                    year=int(row.get("year", 0) or 0),
+                    needs_accessible=row.get("needs_accessible", False)))
 
         rooms: dict = {}
         for a in assignments:

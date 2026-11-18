@@ -190,7 +190,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   width: 74px; height: 38px; border-radius: 6px;
   border: 1px solid var(--line); background: #fbfcfe;
   display: flex; flex-direction: column; justify-content: center;
-  padding: 2px 5px; overflow: hidden;
+  padding: 2px 5px; overflow: hidden; position: relative;
 }
 .seat.filled {
   border-color: var(--c);
@@ -206,6 +206,17 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .seat.empty { background: repeating-linear-gradient(45deg, #fafbfd, #fafbfd 5px, #f2f4f8 5px, #f2f4f8 10px); }
 .seat.acc { border-style: dashed; border-width: 2px; }
+.access-mark {
+  position: absolute; top: 2px; right: 3px;
+  padding: 1px 3px; border: 1px solid var(--accent); border-radius: 3px;
+  background: #fff; color: var(--accent);
+  font-size: 8px; font-style: normal; font-weight: 700; line-height: 1.2;
+}
+.key i.access-required-key {
+  width: auto; height: auto; padding: 1px 3px; border: 1px solid var(--accent);
+  border-radius: 3px; color: var(--accent); background: #fff;
+  font-size: 8px; font-style: normal; font-weight: 700; line-height: 1.2;
+}
 
 .front {
   margin: 10px 0 0; text-align: center;
@@ -235,6 +246,12 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   color: var(--c); border: 1px solid var(--c);
   background: color-mix(in srgb, var(--c) 10%, white);
 }
+.access-badge {
+  display: inline-block; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--accent); color: var(--accent);
+  background: #edf3ff; font-size: 11px; font-weight: 600;
+}
+.access-none { color: var(--muted); }
 
 /* ---------- capacity counter ---------- */
 

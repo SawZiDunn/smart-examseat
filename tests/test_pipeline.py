@@ -210,6 +210,15 @@ class TestGeneration(unittest.TestCase):
         report = ENGINE.generate("sess13")
         self.assertTrue(all(a.name for a in report["assignments"]))
 
+    def test_assignments_carry_accessibility_requirement(self):
+        report = ENGINE.generate("sess1")
+        self.assertTrue(report["ok"])
+        self.assertTrue(all(isinstance(a.needs_accessible, bool)
+                            for a in report["assignments"]))
+        self.assertTrue(any(a.needs_accessible for a in report["assignments"]))
+        self.assertTrue(any(not a.needs_accessible
+                            for a in report["assignments"]))
+
     def test_raw_route_agrees_with_json_route(self):
         status, rows = ENGINE.generate_raw("sess13")
         report = ENGINE.generate("sess13")

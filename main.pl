@@ -228,13 +228,19 @@ seating_report_json(Session, Filters, Json) :-
 
 result_dict(ok(Assignments), _{ status: "ok", assignments: List }) :- !,
     findall(_{ student: S, name: Name, major: Major, year: Year,
-               exam: E, room: R, row: Row, col: Col },
+               exam: E, room: R, row: Row, col: Col,
+               needs_accessible: NeedsAccessible },
             ( member(assign(S, E, R, Row, Col), Assignments),
-              student_fields(S, Name, Major, Year) ),
+              student_fields(S, Name, Major, Year),
+              student_access_need(S, NeedsAccessible) ),
             List).
 result_dict(failed(Reason), _{ status: "failed", reason: Text, detail: Detail }) :-
     term_string(Reason, Text),
     reason_detail(Reason, Detail).
+
+student_access_need(StudentId, true) :-
+    rules:needs_accessible(StudentId), !.
+student_access_need(_, false).
 
 student_fields(S, Name, Major, Year) :-
     (   student_display(S, Name0, Major0, Year0)
