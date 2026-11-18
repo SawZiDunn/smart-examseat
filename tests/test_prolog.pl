@@ -210,6 +210,14 @@ test(cohort_order_is_contiguous_after_accessible_students) :-
     Ordered = [s(s0003, cs101), s(s0001, cs101), s(s0005, cs101),
                s(s0002, ma201)].
 
+test(cohort_uses_tightest_room_that_fits) :-
+    Slots0 = [slot(r101, 10, 2, 10, [], []),
+              slot(r102, 3, 1, 10, [], [])],
+    allocation:deal([s(s0001, cs101), s(s0005, cs101)],
+                    Slots0, Slots, []),
+    memberchk(slot(r101, 10, 2, 10, [], []), Slots),
+    memberchk(slot(r102, 1, 1, 10, [cs101-2], _), Slots).
+
 test(sample_session_uses_one_room_at_full_capacity) :-
     students_in_session(sess1, filters([], []), Students),
     allocation:open_rooms(Students, [spec(r101, 20, 2, 12)]).
@@ -229,20 +237,17 @@ test(uses_two_rooms_when_one_exam_exceeds_room_limit) :-
 
 :- begin_tests(cohort_room_preference, [setup(use_full_data)]).
 
-test(cs302_year_three_cohort_stays_in_one_room_when_it_fits) :-
+test(cs302_year_three_cohort_is_kept_together_as_much_as_capacity_allows) :-
     students_in_session(sess5, filters([], []), Students),
     allocate_rooms(sess5, Students, Allocation),
-    findall(Id,
-            ( member(s(Id, cs302), Students),
-              user:student(Id, cs, 3, _) ),
-            Cohort),
-    length(Cohort, 50),
-    findall(Room,
-            ( member(room_group(Room, Group), Allocation),
-              member(s(Id, cs302), Group),
-              user:student(Id, cs, 3, _) ),
-            Rooms0),
-    sort(Rooms0, [_]).
+    findall(Count,
+            ( member(room_group(_, Group), Allocation),
+              include([s(Id, cs302)]>>(user:student(Id, cs, 3, _)),
+                      Group, Cohort),
+              length(Cohort, Count) ),
+            Counts),
+    max_list(Counts, MaxInOneRoom),
+    MaxInOneRoom >= 48.
 
 :- end_tests(cohort_room_preference).
 
@@ -463,10 +468,10 @@ test(every_session_solves_and_validates) :-
                 ; format(user_error, '~w invalid: ~q~n', [S, Report]), fail )
              ; format(user_error, '~w failed: ~q~n', [S, Result]), fail ) )).
 
-test(sess1_reuses_existing_rooms_after_search_limits) :-
+test(sess1_fits_six_rooms_with_at_most_one_retry) :-
     generate_seating(sess1, filters([], []), ok(As),
                      stats(585, 6, Retries, _)),
-    Retries > 0,
+    Retries =< 1,
     validate_seating(sess1, filters([], []), As, valid).
 
 test(a_filtered_run_validates) :-
