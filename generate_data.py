@@ -94,7 +94,11 @@ class Cohort:
 # config
 # --------------------------------------------------------------------------
 
-class ConfigError(Exception):
+class GenerationError(Exception):
+    """The dataset could not be built; the message says why in plain words."""
+
+
+class ConfigError(GenerationError):
     pass
 
 
@@ -222,7 +226,8 @@ def run_timetabler(ds: Dataset, fill: int) -> tuple:
                  "-t", "halt", MAIN_PL],
                 cwd=HERE, env=env, capture_output=True, text=True, timeout=600)
         except FileNotFoundError:
-            sys.exit("swipl not found - install SWI-Prolog (see requirements.txt)")
+            raise GenerationError(
+                "swipl not found - install SWI-Prolog (see requirements.txt)")
 
     exams, summary = [], ""
     for line in proc.stdout.splitlines():
@@ -232,10 +237,11 @@ def run_timetabler(ds: Dataset, fill: int) -> tuple:
         elif line.startswith("% timetable:"):
             summary = line[2:]
         elif line.startswith("FAILED:"):
-            sys.exit(f"timetabling failed: {line[len('FAILED:'):].strip()}")
+            raise GenerationError(
+                f"timetabling failed: {line[len('FAILED:'):].strip()}")
     if proc.returncode != 0 or not exams and ds.subjects:
-        sys.exit(f"timetabling failed (exit {proc.returncode}):\n"
-                 f"{proc.stdout}\n{proc.stderr}")
+        raise GenerationError(f"timetabling failed (exit {proc.returncode}):\n"
+                              f"{proc.stdout}\n{proc.stderr}")
     return exams, summary
 
 
@@ -396,6 +402,26 @@ def check_and_report(ds: Dataset, label: str, verbose: bool) -> None:
               f"({100 * peak / seats_total:.0f}% occupancy)")
 
 
+def generate(cfg: dict, verbose: bool = False) -> tuple:
+    """config dict -> (Dataset with its timetable, timetable summary line).
+
+    Everything `make data` does except writing the file. Raises
+    GenerationError with a readable message when the config is wrong or the
+    exams cannot be timetabled.
+    """
+    try:
+        full = build_full(cfg)
+    except (KeyError, ValueError, TypeError) as exc:
+        raise ConfigError(f"bad config: {exc}") from exc
+    fill = cfg.get("timetable", {}).get("max_fill_percent", 80)
+    full.exams, summary = run_timetabler(full, fill)
+    try:
+        check_and_report(full, "data.pl (full)", verbose)
+    except AssertionError as exc:
+        raise GenerationError(str(exc)) from exc
+    return full, summary
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="SmartExamSeat dataset generator")
     ap.add_argument("--config", default=os.path.join(HERE, "config.toml"),
@@ -411,13 +437,14 @@ def main() -> None:
 
     try:
         cfg = load_config(args.config)
-        full = build_full(cfg)
-    except (ConfigError, KeyError, ValueError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, tomllib.TOMLDecodeError) as exc:
         sys.exit(f"{args.config}: {exc}")
-
-    fill = cfg.get("timetable", {}).get("max_fill_percent", 80)
-    full.exams, summary = run_timetabler(full, fill)
-    check_and_report(full, "data.pl (full)", args.stats)
+    try:
+        full, summary = generate(cfg, args.stats)
+    except ConfigError as exc:
+        sys.exit(f"{args.config}: {exc}")
+    except GenerationError as exc:
+        sys.exit(str(exc))
     write_prolog(os.path.join(args.out, "data.pl"), full,
                  "SmartExamSeat full dataset")
 

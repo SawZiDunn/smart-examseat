@@ -39,12 +39,17 @@
 % Dataset loading
 % ===========================================================================
 
+%  SMARTEXAMSEAT_DATA=none starts with no data at all; the web UI then
+%  loads one with load_data_file/1 after the admin imports a config.
 load_dataset :-
     (   getenv('SMARTEXAMSEAT_DATA', File)
     ->  true
     ;   File = 'data.pl'
     ),
-    load_data_file(File).
+    (   File == none
+    ->  true
+    ;   load_data_file(File)
+    ).
 
 load_data_file(File) :-
     resolve(File, Path),

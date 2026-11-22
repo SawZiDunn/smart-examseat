@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SmartExamSeat - Import</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">SES</span>
+    <div>
+      <h1>SmartExamSeat</h1>
+      <p>Start by importing a dataset config</p>
+    </div>
+  </div>
+  {% if current %}
+  <a class="dataset dataset-link" href="{{ url_for('index') }}" title="Keep the current data">
+    <code>&larr; Back to seating</code>
+    <span>loaded: {{ current }}</span>
+  </a>
+  {% endif %}
+</header>
+
+<div class="importpage">
+  <section class="list-wrap">
+    <div class="list-head">
+      <h2>Import a config</h2>
+      <span class="hint">The app generates the students and subjects, builds the exam timetable with
+        <code>timetable.pl</code> and loads the result, the same as <code>make data</code>.</span>
+    </div>
+
+    <div class="upload">
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="file" accept=".toml">
+        <span id="dropname">Drop a <code>.toml</code> config here (e.g. <code>config_big.toml</code>
+          or <code>config_small.toml</code>), or click to choose one</span>
+      </label>
+    </div>
+  </section>
+
+  <div id="status" class="status hidden" role="status"></div>
+</div>
+
+<script>
+const status = document.getElementById("status");
+function show(kind, html) {
+  status.className = "status " + kind;
+  status.innerHTML = html;
+}
+function busy(on) { document.getElementById("file").disabled = on; }
+
+async function run(body, name) {
+  busy(true);
+  show("busy", `Generating <code>${name}</code>: students, subjects, then the timetable&hellip; ` +
+               `(a few seconds for a big config)`);
+  try {
+    const res = await fetch("/api/import", body);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.message || `HTTP ${res.status}`);
+    const s = data.summary;
+    show("ok", `<b>${name}</b> loaded in ${data.seconds} s: ${s.students} students, ` +
+               `${s.subjects} subjects, ${s.sessions} sessions, ${s.rooms_available} rooms. ` +
+               `${data.timetable ? data.timetable + ". " : ""}Opening the data&hellip;`);
+    setTimeout(() => location.href = "/data", 700);
+  } catch (e) {
+    show("error", `<b>${name}</b> could not be loaded.<br>${e.message.replace(/</g, "&lt;")}`);
+    busy(false);
+  }
+}
+
+function upload(file) {
+  if (!file) return;
+  document.getElementById("dropname").textContent = file.name;
+  const form = new FormData();
+  form.append("config", file);
+  run({ method: "POST", body: form }, file.name);
+}
+document.getElementById("file").onchange = e => upload(e.target.files[0]);
+const zone = document.getElementById("dropzone");
+zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("over"); });
+zone.addEventListener("dragleave", () => zone.classList.remove("over"));
+zone.addEventListener("drop", e => {
+  e.preventDefault(); zone.classList.remove("over");
+  upload(e.dataTransfer.files[0]);
+});
+</script>
+</body>
+</html>

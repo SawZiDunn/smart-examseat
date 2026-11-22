@@ -28,7 +28,7 @@ Filters are `filters(Years, Majors)`. An empty list means "everyone":
 ## 2. Automated tests
 
 ```bash
-make test            # everything (80 Prolog + 64 Python, about 45 s)
+make test            # everything (80 Prolog + 70 Python, about 45 s)
 make test-prolog     # plunit only:  swipl -q -g run_tests -t halt tests/test_prolog.pl
 make test-python     # bridge, web app, export and config tests
 ```
@@ -93,10 +93,18 @@ $ swipl main.pl
 ## 4. Web UI checklist
 
 ```bash
-make run                 # full dataset  -> http://127.0.0.1:5000
+make run                 # starts empty -> http://127.0.0.1:5000 opens the Import page
+python3 app.py --dataset data.pl                               # skip the import, use data.pl
 make run-sample          # 20-student dataset
 python3 app.py --dataset tests/scenarios/not_enough_seats.pl   # any data file
 ```
+
+**Import**
+- [ ] `make run`, open the page: it goes straight to *Import*, which shows only the upload box
+- [ ] Upload `config_small.toml`: about a second later the data page opens with 120 students and 6 sessions
+- [ ] *Change config* (top right), upload `config_big.toml`: 1,925 students, 20 sessions
+- [ ] Upload a config with `days = 1`: a readable refusal ("needs at least 3 sessions"), and the previous data stays loaded
+- [ ] `config.toml` and `data.pl` are unchanged afterwards (`git status`)
 
 Open `http://127.0.0.1:5000/?view=term` to go straight to the whole-term view, or `/data` for the data page.
 
@@ -205,8 +213,9 @@ Tested with the default students and rooms:
 
 ### The small demo dataset: `config_small.toml`
 
-A second config that is easy to picture, for demos. It is only a template:
-copy it over `config.toml` to use it.
+A second config that is easy to picture, for demos. In the UI, upload it on
+the Import page (or *Change config*). For the console tools, copy it over
+`config.toml`:
 
 |        | SE | CS | EE |
 |---|---|---|---|
@@ -218,7 +227,7 @@ of 8x8 (128 seats) and 1 closed room.
 
 ```bash
 cp config_small.toml config.toml
-make data && make run
+make data && make demo
 
 # afterwards: back to the main set
 cp config_big.toml config.toml && make data

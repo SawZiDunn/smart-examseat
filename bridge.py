@@ -273,7 +273,12 @@ def _atom(value) -> str:
 class SeatingEngine:
     """A loaded Prolog knowledge base you can ask for seating plans."""
 
-    def __init__(self, dataset: str | None = None, main_pl: str = MAIN_PL):
+    def __init__(self, dataset: str | None = None, main_pl: str = MAIN_PL,
+                 empty: bool = False):
+        """Load main.pl and a dataset (data.pl unless told otherwise).
+
+        empty=True starts with no data; call load_dataset() later.
+        """
         try:
             from pyswip import Prolog
         except ImportError as exc:                       # pragma: no cover
@@ -282,13 +287,20 @@ class SeatingEngine:
                 "(and make sure SWI-Prolog itself is installed)."
             ) from exc
 
-        if dataset:
+        if empty:
+            os.environ["SMARTEXAMSEAT_DATA"] = "none"
+        elif dataset:
             os.environ["SMARTEXAMSEAT_DATA"] = dataset
 
         self._lock = threading.Lock()
         self._prolog = Prolog()
         self._prolog.consult(main_pl)
-        self.dataset = dataset or "data.pl"
+        self.dataset = None if empty else (dataset or "data.pl")
+
+    def load_dataset(self, path: str, label: str | None = None) -> None:
+        """Replace the loaded facts with another data file (absolute path)."""
+        self._one(f"load_data_file({_atom(os.path.abspath(path))})")
+        self.dataset = label or os.path.basename(path)
 
     # -- low level ---------------------------------------------------------
 

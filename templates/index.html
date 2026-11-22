@@ -16,6 +16,8 @@
       <p>University exam seating planner &middot; Prolog CSP engine</p>
     </div>
   </div>
+  <div class="topbar-links">
+  <a class="change-config" href="{{ url_for('import_page') }}" title="Load a different config">Change config</a>
   <a class="dataset dataset-link" href="{{ url_for('data_page') }}"
      title="See everything in {{ dataset }}: students, subjects, timetable, rooms">
     <code>{{ dataset }} <span class="open-hint">&rarr; view data</span></code>
@@ -24,6 +26,7 @@
           {{ catalogue.summary.rooms_available }} rooms &middot;
           {{ catalogue.summary.seats }} seats</span>
   </a>
+  </div>
 </header>
 
 <main>

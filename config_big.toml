@@ -1,5 +1,5 @@
 # ===========================================================================
-# SmartExamSeat dataset configuration                         
+# SmartExamSeat - MAIN demo dataset (10 majors, 4 years, 10 rooms)
 # ===========================================================================
 # generate_data.py reads this file and writes data.pl:
 #   1. students for every (major, year) cohort,

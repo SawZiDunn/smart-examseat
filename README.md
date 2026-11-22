@@ -46,7 +46,8 @@ config.toml → Data + Timetable → Allocation → Seat Solver → Validator �
 1. **Describe the term.** In `config.toml` the administrator sets the majors,
    the year levels, how many students and subjects each (major, year) cohort
    has, the rooms, and the exam period (days x time slots = sessions).
-2. **Generate the data.** `make data` runs `generate_data.py`, which reads
+2. **Generate the data.** In the UI this happens when you import a config on
+   the Import page. From the console, `make data` runs `generate_data.py`, which reads
    `config.toml` and writes 2 files: `data.pl` (the full dataset, including
    the exam timetable built by `timetable.pl`) and `data_sample.pl` (a fixed
    20-student test set, not affected by `config.toml`). The data holds the
@@ -131,12 +132,19 @@ sudo apt install swi-prolog          # or: brew install swi-prolog
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-make data                            # config.toml -> data.pl (+ timetable)
 python3 app.py                       # http://127.0.0.1:5000
 ```
 
-Run `make data` (or `python3 generate_data.py --stats`) in the project root,
-with the venv active.
+The app starts empty and opens the **Import** page: upload a config, e.g.
+`config_big.toml` (the main demo set) or `config_small.toml` (a small one).
+The app then does what `make data` does (generate the students, build the
+timetable, check it) in a second or so and loads the result. The generated
+file goes to `out/`; `config.toml` and `data.pl` are not touched. Use
+*Change config* at the top right to switch.
+
+`make data` (or `python3 generate_data.py --stats`) is still how `data.pl` is
+built for the console tools and the tests: run it in the project root, with
+the venv active. `python3 app.py --dataset data.pl` starts the UI on it.
 
 The `Makefile` just gives short names to longer commands you would otherwise
 type by hand (`make data`, `make demo`, `make test`, ...). It doesn't build or
@@ -145,6 +153,7 @@ compile anything.
 Useful variants:
 
 ```bash
+python3 app.py --dataset data.pl          # UI on data.pl, skipping the import page
 python3 app.py --dataset data_sample.pl   # the 20-student smoke-test set
 make demo                                 # solve every session in the console
 make term                                 # whole term + coverage per cohort
@@ -186,7 +195,7 @@ swipl main.pl
 | `tests/test_prolog.pl` | 80 plunit tests |
 | `tests/scenarios/` | tiny edge-case datasets for seating and timetabling |
 | `TESTING.md` | every way to test the system, and how to change the dataset size |
-| `tests/test_pipeline.py` | 64 Python tests (bridge, UI, data page, exports, config, capacity) |
+| `tests/test_pipeline.py` | 70 Python tests (bridge, UI, data page, config import, exports, capacity) |
 
 The facts and predicates each part relies on are listed in
 [section 8](#8-interface-reference).
@@ -356,7 +365,7 @@ the dataset size) see [`TESTING.md`](TESTING.md).
   reasons, nine *injected* violations the validator must catch, the
   edge-case datasets in `tests/scenarios/`, the timetabler (clash-free,
   within capacity, and each failure reason), and the whole-term run.
-* `tests/test_pipeline.py` - 64 tests: the Prolog-term parser, the bridge
+* `tests/test_pipeline.py` - 70 tests: the Prolog-term parser, the bridge
   (both the raw `ok(...)`/`failed(...)` route and the JSON route), every
   session solving and validating, CSV/PDF output, every HTTP endpoint, the
   capacity check, the whole-term endpoint, and config parsing.

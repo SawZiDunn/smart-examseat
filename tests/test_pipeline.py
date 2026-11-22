@@ -389,6 +389,83 @@ class TestWebApp(unittest.TestCase):
         self.assertEqual(se101["cohorts"], [{"major": "se", "year": 1}])
 
 
+class TestConfigImport(unittest.TestCase):
+    """Importing a config in the UI: generate, timetable, load - no make data.
+
+    The engine is shared with the other tests, so every test puts data.pl
+    back when it is done.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        import app as webapp
+        webapp.ENGINE = ENGINE
+        cls.webapp = webapp
+        cls.client = webapp.app.test_client()
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.saved_out = webapp.OUT_DIR
+        webapp.OUT_DIR = cls.tmp.name
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.webapp.OUT_DIR = cls.saved_out
+        cls.tmp.cleanup()
+
+    def tearDown(self):
+        ENGINE.load_dataset(os.path.join(os.path.dirname(CONFIG), "data.pl"),
+                            label="data.pl")
+        self.webapp._CACHE.clear()
+        self.webapp._LAYOUTS.clear()
+
+    def test_without_data_pages_go_to_import_and_apis_refuse(self):
+        ENGINE.dataset = None
+        res = self.client.get("/")
+        self.assertEqual(res.status_code, 302)
+        self.assertTrue(res.headers["Location"].endswith("/import"))
+        self.assertEqual(self.client.get("/data").status_code, 302)
+        self.assertEqual(self.client.get("/api/catalogue").status_code, 409)
+        self.assertEqual(self.client.get("/import").status_code, 200)
+
+    def upload(self, name, data: bytes):
+        return self.client.post("/api/import",
+                                data={"config": (io.BytesIO(data), name)},
+                                content_type="multipart/form-data")
+
+    def small_config(self) -> bytes:
+        with open(os.path.join(os.path.dirname(CONFIG), "config_small.toml"), "rb") as fh:
+            return fh.read()
+
+    def test_import_page_has_the_upload_box(self):
+        res = self.client.get("/import")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn(b'type="file"', res.data)
+
+    def test_uploading_a_config_loads_it(self):
+        res = self.upload("config_small.toml", self.small_config())
+        data = res.get_json()
+        self.assertTrue(data["ok"], data)
+        self.assertEqual(data["summary"]["students"], 120)
+        self.assertEqual(ENGINE.dataset, "config_small.toml")
+        self.assertTrue(os.path.exists(os.path.join(self.tmp.name,
+                                                    "data_config_small.pl")))
+        plan = self.client.post("/api/generate", json={"session": "sess1"}).get_json()
+        self.assertTrue(plan["ok"])
+        self.assertEqual(plan["validation"]["status"], "valid")
+
+    def test_a_config_that_cannot_be_timetabled_is_refused_readably(self):
+        text = self.small_config().replace(b"days = 3", b"days = 1")
+        res = self.upload("tight.toml", text)
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("at least 3 sessions", res.get_json()["message"])
+        self.assertEqual(ENGINE.dataset, "data.pl")      # old data kept
+
+    def test_bad_input_is_refused(self):
+        self.assertEqual(self.upload("bad.toml", b"x = [1").status_code, 400)
+        self.assertEqual(self.upload("notes.txt", b"hello").status_code, 400)
+        self.assertEqual(self.client.post("/api/import").status_code, 400)
+
+
 class TestCapacityAndTerm(unittest.TestCase):
 
     @classmethod

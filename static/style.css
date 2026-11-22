@@ -412,3 +412,26 @@ a.dataset-link .open-hint { color: var(--accent); }
   .datapage { padding: 14px 16px 32px; }
   .filters input[type=search] { min-width: 0; flex: 1 1 100%; }
 }
+
+/* ---------- import page (/import) ---------- */
+
+.importpage { padding: 18px 22px 40px; display: flex; flex-direction: column; gap: 14px; max-width: 980px; }
+.upload { margin-top: 18px; }
+.dropzone {
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  min-height: 84px; padding: 14px; cursor: pointer;
+  border: 2px dashed var(--line); border-radius: var(--radius);
+  color: var(--muted); background: #fafbfd;
+}
+.dropzone:hover, .dropzone.over { border-color: var(--accent); color: var(--accent); }
+.dropzone input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.dropzone code { font-family: var(--mono); }
+.status code { font-family: var(--mono); font-size: 12px; }
+.topbar-links { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
+a.change-config {
+  display: flex; align-items: center; padding: 7px 12px; font-size: 12px;
+  border: 1px solid var(--line); border-radius: 8px; color: var(--ink); text-decoration: none;
+}
+a.change-config:hover { border-color: var(--accent); color: var(--accent); }
+
+@media (max-width: 640px) { .importpage { padding: 14px 16px 32px; } }

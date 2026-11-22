@@ -8,7 +8,7 @@ help:
 	@echo "make test         run both test suites"
 	@echo "make test-prolog  run the plunit suite"
 	@echo "make test-python  run the bridge / UI / export tests"
-	@echo "make run          start the web UI on the full dataset"
+	@echo "make run          start the web UI (import a config in the browser)"
 	@echo "make run-sample   start the web UI on the 20-student sample"
 	@echo "make demo         solve every session from the console"
 	@echo "make term         seat the whole term and print coverage per cohort"

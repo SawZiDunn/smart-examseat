@@ -2,9 +2,14 @@
 """
 app.py - the admin web UI for SmartExamSeat (Member C).
 
-    python3 app.py                      # http://127.0.0.1:5000
-    python3 app.py --dataset data_sample.pl
+    python3 app.py                      # http://127.0.0.1:5000, starts empty
+    python3 app.py --dataset data.pl    # start with a generated data file
     python3 app.py --port 8080
+
+Without --dataset the app starts with no data: the admin first uploads a
+config (e.g. config_small.toml or config_big.toml) on /import, and the app
+generates and timetables it - what `make data` does - and loads
+the result. Generated files go to out/ and never replace data.pl.
 
 The admin picks a session plus optional year/major filters, presses Generate,
 and gets the seat grid for each room, a student list, the validator report,
@@ -16,13 +21,21 @@ All Prolog work happens in bridge.py; this file only serves HTTP.
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import threading
+import time
+import tomllib
 
-from flask import (Flask, jsonify, render_template, request, Response,
-                   send_file)
+from flask import (Flask, jsonify, redirect, render_template, request,
+                   Response, send_file, url_for)
 
 import export
+import generate_data
 from bridge import SeatingEngine, PrologError
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT_DIR = os.path.join(HERE, "out")
 
 app = Flask(__name__)
 
@@ -36,6 +49,26 @@ def engine() -> SeatingEngine:
     if ENGINE is None:                                   # pragma: no cover
         raise RuntimeError("engine not started")
     return ENGINE
+
+
+def has_data() -> bool:
+    return ENGINE is not None and ENGINE.dataset is not None
+
+
+# Pages and endpoints that work before any data is loaded.
+_OPEN_PATHS = ("/import", "/api/import", "/static/")
+
+
+@app.before_request
+def require_data():
+    """Before a config is imported there is nothing to show: pages go to
+    /import, API and export calls get a 409."""
+    if has_data() or request.path.startswith(_OPEN_PATHS):
+        return None
+    if request.path.startswith(("/api/", "/export/")):
+        return jsonify({"error": "no_dataset",
+                        "message": "Import a config first."}), 409
+    return redirect(url_for("import_page"))
 
 
 def layout_of(room_id: str) -> dict:
@@ -144,6 +177,52 @@ def index():
     catalogue = engine().catalogue()
     return render_template("index.html", catalogue=catalogue,
                            dataset=engine().dataset)
+
+
+# ---------------------------------------------------------------------------
+# Importing a config: generate + timetable + load, without `make data`
+# ---------------------------------------------------------------------------
+
+def import_config(cfg: dict, name: str) -> dict:
+    """Generate and timetable a config, write it to out/, load it."""
+    started = time.time()
+    ds, timetable = generate_data.generate(cfg)
+    os.makedirs(OUT_DIR, exist_ok=True)
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(name)[0]) or "config"
+    path = os.path.join(OUT_DIR, f"data_{stem}.pl")
+    generate_data.write_prolog(path, ds, f"SmartExamSeat dataset from {name}")
+    with _LOCK:
+        engine().load_dataset(path, label=name)
+        _CACHE.clear()
+        _LAYOUTS.clear()
+    return {"ok": True, "dataset": name, "file": os.path.relpath(path, HERE),
+            "timetable": timetable,
+            "summary": engine().catalogue()["summary"],
+            "seconds": round(time.time() - started, 1)}
+
+
+@app.route("/import")
+def import_page():
+    return render_template("import.html",
+                           current=ENGINE.dataset if ENGINE else None)
+
+
+@app.route("/api/import", methods=["POST"])
+def api_import():
+    """Upload a .toml config (form field `config`)."""
+    upload = request.files.get("config")
+    if not upload or not upload.filename:
+        return jsonify({"ok": False, "message": "Choose a .toml config file."}), 400
+    name = os.path.basename(upload.filename)
+    if not name.endswith(".toml"):
+        return jsonify({"ok": False, "message": "Upload a .toml config file."}), 400
+    try:
+        cfg = tomllib.loads(upload.read().decode("utf-8"))
+        return jsonify(import_config(cfg, name))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+        return jsonify({"ok": False, "message": f"Not a valid TOML file: {exc}"}), 400
+    except generate_data.GenerationError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
 
 
 @app.route("/data")
@@ -304,19 +383,24 @@ def main() -> None:
 
     ap = argparse.ArgumentParser(description="SmartExamSeat web UI")
     ap.add_argument("--dataset", default=None,
-                    help="data.pl (default) or data_sample.pl")
+                    help="start with this data file (e.g. data.pl); "
+                         "default: start empty and import a config")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=5000)
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
 
     print("loading Prolog knowledge base ...")
-    ENGINE = SeatingEngine(dataset=args.dataset)
-    summary = ENGINE.catalogue()["summary"]
-    print(f"  {summary['students']} students, {summary['subjects']} subjects, "
-          f"{summary['sessions']} sessions, "
-          f"{summary['rooms_available']} available rooms, "
-          f"{summary['seats']} seats")
+    if args.dataset:
+        ENGINE = SeatingEngine(dataset=args.dataset)
+        summary = ENGINE.catalogue()["summary"]
+        print(f"  {summary['students']} students, {summary['subjects']} subjects, "
+              f"{summary['sessions']} sessions, "
+              f"{summary['rooms_available']} available rooms, "
+              f"{summary['seats']} seats")
+    else:
+        ENGINE = SeatingEngine(empty=True)
+        print("  no data yet: open the page and import a config")
     print(f"  serving on http://{args.host}:{args.port}")
 
     # One Prolog engine, so keep Flask single-threaded.
