@@ -13,26 +13,26 @@
 :- dynamic exam/2.
 
 % ---- sessions (20) ----
-session_time(sess1, '2026-12-01', '09:00', '12:00').
-session_time(sess2, '2026-12-01', '13:00', '16:00').
-session_time(sess3, '2026-12-02', '09:00', '12:00').
-session_time(sess4, '2026-12-02', '13:00', '16:00').
-session_time(sess5, '2026-12-03', '09:00', '12:00').
-session_time(sess6, '2026-12-03', '13:00', '16:00').
-session_time(sess7, '2026-12-04', '09:00', '12:00').
-session_time(sess8, '2026-12-04', '13:00', '16:00').
-session_time(sess9, '2026-12-07', '09:00', '12:00').
-session_time(sess10, '2026-12-07', '13:00', '16:00').
-session_time(sess11, '2026-12-08', '09:00', '12:00').
-session_time(sess12, '2026-12-08', '13:00', '16:00').
-session_time(sess13, '2026-12-09', '09:00', '12:00').
-session_time(sess14, '2026-12-09', '13:00', '16:00').
-session_time(sess15, '2026-12-10', '09:00', '12:00').
-session_time(sess16, '2026-12-10', '13:00', '16:00').
-session_time(sess17, '2026-12-11', '09:00', '12:00').
-session_time(sess18, '2026-12-11', '13:00', '16:00').
-session_time(sess19, '2026-12-14', '09:00', '12:00').
-session_time(sess20, '2026-12-14', '13:00', '16:00').
+session_time(sess1, '2026-12-01', '09:30', '12:30').
+session_time(sess2, '2026-12-01', '13:30', '16:30').
+session_time(sess3, '2026-12-02', '09:30', '12:30').
+session_time(sess4, '2026-12-02', '13:30', '16:30').
+session_time(sess5, '2026-12-03', '09:30', '12:30').
+session_time(sess6, '2026-12-03', '13:30', '16:30').
+session_time(sess7, '2026-12-04', '09:30', '12:30').
+session_time(sess8, '2026-12-04', '13:30', '16:30').
+session_time(sess9, '2026-12-07', '09:30', '12:30').
+session_time(sess10, '2026-12-07', '13:30', '16:30').
+session_time(sess11, '2026-12-08', '09:30', '12:30').
+session_time(sess12, '2026-12-08', '13:30', '16:30').
+session_time(sess13, '2026-12-09', '09:30', '12:30').
+session_time(sess14, '2026-12-09', '13:30', '16:30').
+session_time(sess15, '2026-12-10', '09:30', '12:30').
+session_time(sess16, '2026-12-10', '13:30', '16:30').
+session_time(sess17, '2026-12-11', '09:30', '12:30').
+session_time(sess18, '2026-12-11', '13:30', '16:30').
+session_time(sess19, '2026-12-14', '09:30', '12:30').
+session_time(sess20, '2026-12-14', '13:30', '16:30').
 
 % ---- subjects (191) ----
 subject(se101).

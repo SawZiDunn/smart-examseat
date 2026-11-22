@@ -150,7 +150,7 @@ Open `http://127.0.0.1:5000/?view=term` to go straight to the whole-term view, o
 - [ ] *+ Add a room size* adds a row; the option count and pool size update
 - [ ] Raise *Cost per room needed* and run again: options with fewer rooms win more often
 - [ ] *Use this option*: the Data page timetable now has the chosen days and slots, and the seating page uses the pool
-- [ ] Add a constraint on the Constraints page (e.g. `no_exam_at('13:00')`) and run the planner again: the 2-slot options change
+- [ ] Add a constraint on the Constraints page (e.g. `no_exam_at('13:30')`) and run the planner again: the 2-slot options change
 
 **Whole term**
 - [ ] **Seat every session**: 20 / 20 sessions seated, and every cohort cell is green with seated = total

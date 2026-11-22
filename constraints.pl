@@ -191,7 +191,7 @@ check_param(N, room, R) :- !, fail_with('~w: there is no room ~q.', [N, R]).
 check_param(_, date, D) :- atom(D), user:session_time(_, D, _, _), !.
 check_param(N, date, D) :- !, fail_with('~w: no session on ~q (dates look like ''2026-12-01'').', [N, D]).
 check_param(_, time, T) :- atom(T), user:session_time(_, _, T, _), !.
-check_param(N, time, T) :- !, fail_with('~w: no session starts at ~q (times look like ''09:00'').', [N, T]).
+check_param(N, time, T) :- !, fail_with('~w: no session starts at ~q (times look like ''09:30'').', [N, T]).
 check_param(_, subject, S) :- atom(S), user:subject(S), !.
 check_param(N, subject, S) :- !, fail_with('~w: there is no subject ~q.', [N, S]).
 check_param(_, session, S) :- atom(S), user:session_time(S, _, _, _), !.

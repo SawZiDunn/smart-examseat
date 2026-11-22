@@ -69,7 +69,7 @@ config.toml → Data + Timetable → Allocation → Seat Solver → Validator �
    `data.pl` unchanged. How the decision is made is in section 4.6.
 
    **The timetable is fixed.** Once `make data` has run, `se101` is examined
-   in `sess1` (Tuesday 1 Dec, 09:00-12:00) and nowhere else, and all 50
+   in `sess1` (Tuesday 1 Dec, 09:30-12:30) and nowhere else, and all 50
    year-1 SE students sit it then, together. Each subject gets exactly one
    session. You don't pick sessions by hand: the timetabler picks them
    automatically. The timetable stays the same until you run `make data`
@@ -86,7 +86,7 @@ with their exams, and the rooms.
 **For each session (in the UI)**
 
 4. **Pick a session and who to seat.** The administrator chooses a session
-   (e.g. Tuesday 09:00-12:00) and can narrow it by year and major. A live
+   (e.g. Tuesday 09:30-12:30) and can narrow it by year and major. A live
    counter shows *selected / seats*, and the UI refuses a selection larger
    than the open rooms.
    - Choosing a session decides which exams are seated. Picking `sess1` seats
@@ -550,7 +550,7 @@ student_name(Id, Name).
 subject(Code).
 enrolled(Id, Code).
 exam(Code, Session).                       % the timetable
-session_time(Session, Date, Start, End).   % session_time(sess1, '2026-12-01', '09:00', '12:00')
+session_time(Session, Date, Start, End).   % session_time(sess1, '2026-12-01', '09:30', '12:30')
 room(RoomId, Rows, Cols, Available).       % Available = yes | no
 seat(RoomId, Row, Col, SeatType).          % SeatType = normal | accessible
 ```

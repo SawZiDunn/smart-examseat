@@ -13,7 +13,7 @@
 :- dynamic exam/2.
 
 % ---- sessions (1) ----
-session_time(sess1, '2026-12-01', '09:00', '12:00').
+session_time(sess1, '2026-12-01', '09:30', '12:30').
 
 % ---- subjects (2) ----
 subject(cs101).

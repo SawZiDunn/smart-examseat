@@ -66,10 +66,10 @@ Pick one in **Add a constraint**, or type the term directly.
 | `max_exams_per_day(1)` | no student has more than 1 exam on a day (soft by default) | both |
 | `no_back_to_back` | no student has the morning and the afternoon exam on the same day | both |
 | `no_exam_on('2026-12-03')` | no exams on that date | hard |
-| `no_exam_at('13:00')` | no afternoon exams at all | hard |
+| `no_exam_at('13:30')` | no afternoon exams at all | hard |
 | `fixed_session(se101, sess3)` | se101 must be in sess3 | hard |
 
-Dates and times need quotes (`'2026-12-03'`, `'13:00'`). The picker adds them for you.
+Dates and times need quotes (`'2026-12-03'`, `'13:30'`). The picker adds them for you.
 
 ---
 
@@ -111,7 +111,7 @@ session) the search tries, exactly like a built-in one.
 | `exam_session(Exam, Session)` | `Exam` is held in `Session` |
 | `takes(S, Exam)` | student `S` is enrolled in `Exam` |
 | `session_date(Session, Date)` | e.g. `'2026-12-01'` |
-| `session_start(Session, Time)` | e.g. `'09:00'` |
+| `session_start(Session, Time)` | e.g. `'09:30'` |
 | `session_weekday(Session, Day)` | `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun` |
 | `session_index(Session, N)` | 1 for the first session, 2 for the next, ... |
 | `exam_size(Exam, N)` | `N` students sit `Exam` |
@@ -192,7 +192,7 @@ violation(E) :-
 violation(E) :-
     exam_session(E, S),
     exam_cohort(E, _, 4),
-    session_start(S, T), T \== '09:00'.
+    session_start(S, T), T \== '09:30'.
 ```
 
 ```prolog
@@ -208,7 +208,7 @@ violation(E) :-
 violation(E) :-
     exam_session(E, S),
     exam_size(E, N), N > 40,
-    session_start(S, '13:00').
+    session_start(S, '13:30').
 ```
 
 ```prolog
@@ -240,7 +240,7 @@ Each one is a few clicks. Press **Run** after every change.
 | Remove `separation(1)` | same-exam students may now sit side by side (check a room on the seating page) |
 | Add `separation(2)` and remove `separation(1)` | **not feasible** in two sessions (2 empty seats between same-exam students is too tight for the two 8×8 rooms). *Which constraint is to blame?* names `separation(2)` |
 | Add `cohort_together` as soft, weight 3 | the penalty shows which exams are split over rooms |
-| Add `no_exam_at('13:00')` | all exams move to the mornings: 3 sessions, nearly full |
+| Add `no_exam_at('13:30')` | all exams move to the mornings: 3 sessions, nearly full |
 | Change `max_exams_per_day(1)` to **hard**, then add `no_exam_on('2026-12-03')` | **not feasible**: year-1 students have 3 exams but only 2 days are left (proven by a lower bound, without searching) |
 | Add `room_fill(30)` | **not feasible**: press *Which constraint is to blame?* and it names `room_fill(30)` |
 | Add the rule "year 1 students not in the front row" (an example button) as hard | **not feasible**: the blame table names both `accessible_seats` and your rule, because the accessible seats are in the front row. Remove either one and it works. |

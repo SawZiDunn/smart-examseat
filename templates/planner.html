@@ -107,13 +107,13 @@
 const $ = id => document.getElementById(id);
 const esc = v => String(v).replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const DEFAULT_SLOTS = [["09:00", "12:00"], ["13:00", "16:00"], ["16:30", "19:30"]];
+const DEFAULT_SLOTS = [["09:30", "12:30"], ["13:30", "16:30"]];   // morning, afternoon
 const S = { results: [], stop: false, best: null };
 
 // ---------- inputs ----------
 function slotRows(slots, tryK) {
   const rows = [];
-  for (let k = 1; k <= 3; k++) {
+  for (let k = 1; k <= DEFAULT_SLOTS.length; k++) {
     const times = Array.from({ length: k }, (_, i) => slots[i] || DEFAULT_SLOTS[i]);
     rows.push(`<tr>
       <td><input type="checkbox" class="trysl" data-k="${k}" ${tryK.includes(k) ? "checked" : ""}></td>
@@ -173,7 +173,7 @@ async function setup() {
   $("start").value = s.start;
   $("dmin").value = Math.max(1, s.days - 3);
   $("dmax").value = s.days + 2;
-  slotRows(s.slots.length ? s.slots : DEFAULT_SLOTS, [Math.min(Math.max(s.slots.length, 1), 3)]);
+  slotRows(DEFAULT_SLOTS, [1, 2]);   // try both: morning only, and morning + afternoon
   s.pool.forEach(poolRow);
   ["dmin", "dmax", "start"].forEach(id => $(id).onchange = updateCount);
   updateCount();

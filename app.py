@@ -325,9 +325,9 @@ def read_option(body: dict) -> tuple:
     if not 1 <= days <= 60:
         raise ValueError("days must be between 1 and 60")
     slots = [(str(a), str(b)) for a, b in body.get("slots") or []]
-    if not 1 <= len(slots) <= 6 or not all(_TIME.match(a) and _TIME.match(b)
+    if not 1 <= len(slots) <= 2 or not all(_TIME.match(a) and _TIME.match(b)
                                            for a, b in slots):
-        raise ValueError("give 1 to 6 slots as HH:MM times")
+        raise ValueError("give 1 or 2 slots (morning, afternoon) as HH:MM times")
     start = str(body.get("start", ""))
     if not _DATE.match(start):
         raise ValueError("the start date must look like 2026-12-01")

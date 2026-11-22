@@ -145,7 +145,7 @@ def sessions_from(cfg: dict) -> list:
     period = cfg.get("exam_period", {})
     day = datetime.date.fromisoformat(period.get("start_date", "2026-12-01"))
     days = period.get("days", 8)
-    slots = period.get("slots", [["09:00", "12:00"], ["13:00", "16:00"]])
+    slots = period.get("slots", [["09:30", "12:30"], ["13:30", "16:30"]])
     out, used = [], 0
     while used < days:
         if day.weekday() < 5:                       # Mon-Fri
@@ -248,7 +248,7 @@ def run_timetabler(ds: Dataset, fill: int) -> tuple:
 def build_sample() -> Dataset:
     """Tiny hand-sized dataset: 20 students, 2 subjects, 1 session, 2 rooms."""
     ds = Dataset()
-    ds.sessions = [("sess1", "2026-12-01", "09:00", "12:00")]
+    ds.sessions = [("sess1", "2026-12-01", "09:30", "12:30")]
     ds.subjects = ["cs101", "ma201"]
     ds.exams = [("cs101", "sess1"), ("ma201", "sess1")]
     ds.rooms = [("r101", 4, 5, "yes"), ("r102", 3, 5, "yes")]

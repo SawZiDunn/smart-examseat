@@ -153,7 +153,7 @@ const esc = v => String(v).replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const strengthOf = name => document.querySelector(`input[name=${name}]:checked`).value;
 
-// Prolog atom: bare if it can be, quoted otherwise ('2026-12-01', '09:00').
+// Prolog atom: bare if it can be, quoted otherwise ('2026-12-01', '09:30').
 function atom(v) {
   v = String(v).trim();
   if (/^-?\d+$/.test(v)) return v;
@@ -177,7 +177,7 @@ const EXAMPLES = [
   { level: "timetable", name: "no year 1 exams on Friday",
     rule: "violation(E) :-\n    exam_session(E, S),\n    exam_cohort(E, _, 1),\n    session_weekday(S, fri)." },
   { level: "timetable", name: "year 4 exams only in the morning",
-    rule: "violation(E) :-\n    exam_session(E, S),\n    exam_cohort(E, _, 4),\n    session_start(S, T), T \\== '09:00'." },
+    rule: "violation(E) :-\n    exam_session(E, S),\n    exam_cohort(E, _, 4),\n    session_start(S, T), T \\== '09:30'." },
   { level: "timetable", name: "SE exams not in the first session",
     rule: "violation(E) :-\n    exam_session(E, S),\n    exam_cohort(E, se, _),\n    session_index(S, 1)." },
 ];
