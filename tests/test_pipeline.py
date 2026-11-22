@@ -725,27 +725,13 @@ class TestCapacityAndTerm(unittest.TestCase):
 class TestWorkbook(unittest.TestCase):
     """The .xlsx format: what the admin types in, and the round trip."""
 
-    def test_big_workbook_gives_the_same_dataset_as_its_recipe(self):
+    def test_big_workbook_matches_data_pl(self):
         ds, fill = workbook.read_workbook(BIG)
-        recipe = generate_data.build_full(
-            generate_data.load_config(os.path.join(ROOT_DIR, "datasets", "big.toml")))
         self.assertEqual(fill, 80)
-        for part in ("students", "names", "subjects", "enrolments",
-                     "sessions", "rooms", "seats"):
-            self.assertEqual(getattr(ds, part), getattr(recipe, part), part)
-
-    def test_written_workbook_reads_back_the_same(self):
-        import tempfile
-        ds = generate_data.build_sample()
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "sample.xlsx")
-            workbook.write_workbook(ds, path, "sample", fill=70, acc_cols=[1, 3])
-            back, fill = workbook.read_workbook(path)
-        self.assertEqual(fill, 70)
-        self.assertEqual(back.students, ds.students)
-        self.assertEqual(back.rooms, ds.rooms)
-        self.assertEqual(back.seats, ds.seats)
-        self.assertEqual(back.sessions, ds.sessions)
+        self.assertEqual(len(ds.students), 1925)
+        self.assertEqual(len(ds.subjects), 191)
+        self.assertEqual(len(ds.enrolments), 9180)
+        self.assertEqual(len(ds.sessions), 20)
 
     def test_real_style_ids_and_uppercase_majors_are_accepted(self):
         from openpyxl import load_workbook
@@ -776,42 +762,11 @@ class TestWorkbook(unittest.TestCase):
         self.assertTrue(str(ws["C5"].value).startswith("=COUNTIFS(Students!"))
 
 
-class TestRecipe(unittest.TestCase):
-    """The random-roster recipe (datasets/*.toml) behind the demo workbooks."""
-
-    def test_per_year_accepts_a_number_or_a_list(self):
-        self.assertEqual(generate_data.per_year(5, [1, 2], "subjects", "se"),
-                         {1: 5, 2: 5})
-        self.assertEqual(generate_data.per_year([5, 3], [1, 2], "subjects", "se"),
-                         {1: 5, 2: 3})
-
-    def test_per_year_rejects_a_wrong_length_list(self):
-        with self.assertRaises(generate_data.ConfigError):
-            generate_data.per_year([5, 3, 4], [1, 2], "subjects", "se")
-
-    def test_cohorts_use_major_values_then_defaults(self):
-        cfg = {"years": [1, 2], "defaults": {"students": 10, "subjects": 4},
-               "majors": {"se": {"subjects": [5, 3]}, "ce": {}}}
-        got = {(c.major, c.year): (c.students, c.subjects)
-               for c in generate_data.cohorts_from(cfg)}
-        self.assertEqual(got, {("se", 1): (10, 5), ("se", 2): (10, 3),
-                               ("ce", 1): (10, 4), ("ce", 2): (10, 4)})
+class TestSessions(unittest.TestCase):
 
     def test_exam_period_skips_weekends(self):
-        cfg = {"exam_period": {"start_date": "2026-12-04", "days": 2,
-                               "slots": [["09:00", "12:00"]]}}
-        dates = [s[1] for s in generate_data.sessions_from(cfg)]
-        self.assertEqual(dates, ["2026-12-04", "2026-12-07"])   # Fri, Mon
-
-    def test_subjects_belong_to_one_cohort(self):
-        cfg = {"years": [1], "defaults": {"students": 2, "subjects": 2},
-               "majors": {"se": {}, "ce": {}},
-               "rooms": {"groups": [{"count": 1, "rows": 2, "cols": 2}]}}
-        ds = generate_data.build_full(cfg)
-        self.assertEqual(sorted(ds.subjects), ["ce101", "ce102", "se101", "se102"])
-        major_of = {s[0]: s[1] for s in ds.students}
-        for student, code in ds.enrolments:
-            self.assertTrue(code.startswith(major_of[student]))
+        sessions = generate_data.sessions_from("2026-12-04", 2, [["09:30", "12:30"]])
+        self.assertEqual([s[1] for s in sessions], ["2026-12-04", "2026-12-07"])  # Fri, Mon
 
 
 if __name__ == "__main__":

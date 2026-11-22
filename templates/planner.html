@@ -78,7 +78,7 @@
 
     <div class="card hidden" id="bestcard">
       <div class="card-head">
-        <h2>Best option</h2>
+        <h2 id="chosentitle">Best option</h2>
         <button id="apply" class="primary">Use this option</button>
       </div>
       <p id="best" class="best-text"></p>
@@ -87,6 +87,7 @@
 
     <div class="card hidden" id="resultscard">
       <h2>Every option</h2>
+      <p class="hint">Press <b>Choose</b> on any feasible option to see it above and use it instead of the best.</p>
       <div class="table-scroll">
         <table class="ctable results">
           <thead><tr><th>Days</th><th>Slots</th><th>Result</th><th>Rooms needed</th>
@@ -108,7 +109,7 @@ const $ = id => document.getElementById(id);
 const esc = v => String(v).replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const DEFAULT_SLOTS = [["09:30", "12:30"], ["13:30", "16:30"]];   // morning, afternoon
-const S = { results: [], stop: false, best: null };
+const S = { results: [], stop: false, best: null, chosen: null, picked: false };
 
 // ---------- inputs ----------
 function slotRows(slots, tryK) {
@@ -195,8 +196,9 @@ function renderResults() {
   const feasible = S.results.filter(r => r.feasible);
   S.best = feasible.reduce((b, r) => (!b || r.score < b.score || (r.score === b.score && r.days < b.days)) ? r : b, null);
   const maxScore = Math.max(1, ...feasible.map(r => r.score));
+  if (!S.picked) S.chosen = S.best;          // follow the best until the user chooses
   $("results").innerHTML = S.results.map((r, i) => `
-    <tr class="${r === S.best ? "best-row" : ""}">
+    <tr class="${r === S.best ? "best-row" : ""} ${r === S.chosen ? "chosen-row" : ""}">
       <td><b>${r.days}</b></td>
       <td>${r.slots} <span class="muted">(${r.sessions} session${r.sessions === 1 ? "" : "s"})</span></td>
       <td>${r.feasible ? '<span class="pill ok">feasible</span>'
@@ -207,17 +209,28 @@ function renderResults() {
             <div class="scorebar" title="${r.day_cost} days + ${r.room_cost} rooms + ${r.penalty} penalty">
               <i class="d" style="width:${100 * r.day_cost / maxScore}%"></i><i class="r" style="width:${100 * r.room_cost / maxScore}%"></i><i class="p" style="width:${100 * r.penalty / maxScore}%"></i>
             </div>` : ""}</td>
-      <td>${r === S.best ? '<span class="pill ok">best</span>' : ""}</td>
+      <td class="choose-cell">${r === S.best ? '<span class="pill ok">best</span>' : ""}
+        ${r.feasible ? (r === S.chosen ? '<span class="pill chosen">chosen</span>'
+                                       : `<button class="small-btn choose" data-i="${i}">Choose</button>`) : ""}</td>
     </tr>`).join("");
+  document.querySelectorAll("#results .choose").forEach(b => b.onclick = () => {
+    S.chosen = S.results[+b.dataset.i];
+    S.picked = true;
+    $("applied").classList.add("hidden");
+    renderResults();
+  });
   $("resultscard").classList.remove("hidden");
-  if (S.best) {
-    const b = S.best;
+  if (S.chosen) {
+    const b = S.chosen;
+    $("chosentitle").textContent = b === S.best ? "Best option" : "Chosen option";
     const rooms = b.by_size.filter(s => s.needed > 0)
       .map(s => `${s.needed} room${s.needed > 1 ? "s" : ""} of ${s.rows}&times;${s.cols}`).join(", ");
     $("best").innerHTML = `<b>${b.days} exam days &times; ${b.slots} slot${b.slots > 1 ? "s" : ""} a day</b>
       (${b.sessions} sessions), needing <b>${rooms}</b>.<br>
       Score <b>${b.score}</b> = ${b.days} days &times; ${+$("wday").value} + ${b.rooms_needed} rooms &times; ${+$("wroom").value}
-      + ${b.penalty} soft penalty. Busiest session: ${b.peak_load} of ${b.limit} allowed seats.`;
+      + ${b.penalty} soft penalty. Busiest session: ${b.peak_load} of ${b.limit} allowed seats.` +
+      (b === S.best ? "" : `<br><span class="muted">The best is ${S.best.days} days &times; ${S.best.slots} ` +
+                           `slot${S.best.slots > 1 ? "s" : ""} (score ${S.best.score}).</span>`);
     $("bestcard").classList.remove("hidden");
   }
 }
@@ -226,7 +239,7 @@ $("go").onclick = async () => {
   const opts = options();
   if (!opts.length) { $("status").className = "status error"; $("status").textContent = "Nothing to try: tick at least one slots-per-day row."; return; }
   if (!readPool().length) { $("status").className = "status error"; $("status").textContent = "The room pool is empty."; return; }
-  S.results = []; S.stop = false; S.best = null;
+  S.results = []; S.stop = false; S.best = null; S.chosen = null; S.picked = false;
   $("bestcard").classList.add("hidden"); $("applied").classList.add("hidden");
   $("go").disabled = true; $("stop").classList.remove("hidden");
   const t0 = Date.now();
@@ -234,11 +247,12 @@ $("go").onclick = async () => {
     const o = opts[i];
     $("status").className = "status busy";
     $("status").innerHTML = `Trying <b>${o.days} days &times; ${o.k} slot${o.k > 1 ? "s" : ""}</b> &hellip; (${i + 1} of ${opts.length})`;
+    const req = body(o);
     const r = await fetch("/api/plan/option", { method: "POST", headers: { "Content-Type": "application/json" },
-                                                 body: JSON.stringify(body(o)) });
+                                                 body: JSON.stringify(req) });
     const d = await r.json();
     if (!r.ok) { $("status").className = "status error"; $("status").textContent = d.message; break; }
-    d._opt = o;
+    d._req = req;        // apply exactly what was tested, even if the form changes later
     S.results.push(d);
     renderResults();
   }
@@ -254,10 +268,11 @@ $("stop").onclick = () => { S.stop = true; };
 $("addroom").onclick = () => { poolRow({ rows: 10, cols: 10, count: 2 }); updateCount(); };
 
 $("apply").onclick = async () => {
-  const b = S.best;
+  const b = S.chosen;
+  if (!b) return;
   $("apply").disabled = true;
   const r = await fetch("/api/plan/apply", { method: "POST", headers: { "Content-Type": "application/json" },
-                                             body: JSON.stringify(body(b._opt)) });
+                                             body: JSON.stringify(b._req) });
   const el = $("applied");
   el.className = "msg " + (r.ok ? "ok" : "error");
   el.innerHTML = r.ok

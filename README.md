@@ -204,8 +204,7 @@ swipl main.pl
 | File | What it holds |
 |---|---|
 | `datasets/big.xlsx`, `small.xlsx` | the demo dataset workbooks: students, subjects, rooms, exam period, settings (section 7) |
-| `datasets/big.toml`, `small.toml` | recipes for a random roster; `make workbooks` turns them into the workbooks above |
-| `workbook.py` | reads and checks a workbook (errors name sheet and row), writes one from a recipe |
+| `workbook.py` | reads and checks a workbook (errors name sheet and row) |
 | `generate_data.py` | workbook -> `data.pl`: runs the timetabler, re-checks clashes and capacity; also builds `data_sample.pl` |
 | `timetable.pl` | `build_timetable/2` - the exam timetabling CSP (subject -> session) |
 | `data.pl` | generated facts, including the timetable as `exam/2` |
@@ -227,7 +226,7 @@ swipl main.pl
 | `tests/test_prolog.pl` | 101 plunit tests |
 | `tests/scenarios/` | tiny edge-case datasets for seating and timetabling |
 | `TESTING.md` | every way to test the system, and how to change the dataset size |
-| `tests/test_pipeline.py` | 88 Python tests (bridge, UI, data page, workbook import, constraints, planner, exports, capacity) |
+| `tests/test_pipeline.py` | 83 Python tests (bridge, UI, data page, workbook import, constraints, planner, exports, capacity) |
 
 The facts and predicates each part relies on are listed in
 [section 8](#8-interface-reference).
@@ -503,7 +502,7 @@ the dataset size) see [`TESTING.md`](TESTING.md).
   "which constraint is to blame" analysis), and the planner (weekdays, an
   option is scored and the setup restored, a too-small pool is refused,
   unused rooms are not counted, applying an option).
-* `tests/test_pipeline.py` - 88 tests: the Prolog-term parser, the bridge
+* `tests/test_pipeline.py` - 83 tests: the Prolog-term parser, the bridge
   (both the raw `ok(...)`/`failed(...)` route and the JSON route), every
   session solving and validating, CSV/PDF output, every HTTP endpoint, the
   capacity check, the whole-term endpoint, workbook reading, checking and import, and
@@ -531,9 +530,21 @@ headers are matched), blank rows are skipped, and majors may be typed `SE` or
 
 IDs and codes are stored in lowercase (`SE-101` becomes `se-101`).
 
-`datasets/big.xlsx` and `datasets/small.xlsx` were made by `make workbooks`
-from the random-roster recipes `datasets/big.toml` and `small.toml`. Edit a
-workbook directly for real data; remake it only to get a new random roster.
+**From an official student list.** Copy the ID, name, major and year
+columns from the university's list into the **Students** sheet. Things to
+check after pasting:
+
+- **Major** must be a short code with no spaces (`SE`, not `Software
+  Engineering`): use Find and Replace once per major. The subjects use the
+  same codes.
+- **Year** is the year level (1-4), not the entry year (`67`) or a
+  semester.
+- **Access** is usually not in the official list: leave it empty (= `none`)
+  and type `wheelchair` or `other_accessible` for the students who need it.
+- The **Summary** lists the majors and years it was made with. For a new
+  major or year, copy a row and change the Major and Year cells.
+
+The student names in the demo workbooks are made up.
 
 ### The demo datasets
 

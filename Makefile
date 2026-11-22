@@ -1,11 +1,10 @@
 # SmartExamSeat - convenience targets
 PY ?= python3
 
-.PHONY: help data workbooks test test-prolog test-python run run-sample demo term clean
+.PHONY: help data test test-prolog test-python run run-sample demo term clean
 
 help:
 	@echo "make data         regenerate data.pl (from datasets/big.xlsx) and data_sample.pl"
-	@echo "make workbooks    remake datasets/big.xlsx and small.xlsx from their recipes"
 	@echo "make test         run both test suites"
 	@echo "make test-prolog  run the plunit suite"
 	@echo "make test-python  run the bridge / UI / export tests"
@@ -17,10 +16,6 @@ help:
 
 data:
 	$(PY) generate_data.py --stats
-
-workbooks:
-	$(PY) workbook.py datasets/big.toml datasets/big.xlsx
-	$(PY) workbook.py datasets/small.toml datasets/small.xlsx
 
 test: test-prolog test-python
 

@@ -28,7 +28,7 @@ Filters are `filters(Years, Majors)`. An empty list means "everyone":
 ## 2. Automated tests
 
 ```bash
-make test            # everything (101 Prolog + 88 Python, about a minute and a half)
+make test            # everything (101 Prolog + 83 Python, about a minute and a half)
 make test-prolog     # plunit only:  swipl -q -g run_tests -t halt tests/test_prolog.pl
 make test-python     # bridge, web app, export and workbook tests
 ```
@@ -255,14 +255,6 @@ main dataset. Run `make data` before `make test`.
 
 The timetable it produces puts each year-1 student's 3 exams on 3 different
 days and seats every session in 1-2 rooms with no retries.
-
-### New random workbooks
-
-`datasets/big.toml` and `small.toml` are recipes: counts per (major, year),
-rooms, exam period and a random seed. `make workbooks` turns them into
-`big.xlsx` and `small.xlsx` with random names (the same ones every time, as
-the seed is fixed). Use this only for test data; real data goes straight
-into a workbook.
 
 ### The test sample
 

@@ -539,6 +539,12 @@ pre.kb.small { margin-top: 6px; font-size: 11.5px; padding: 7px 9px; white-space
 .weights-label { margin-top: 18px !important; }
 .best-text { margin: 4px 0 0; font-size: 14px; line-height: 1.6; }
 .results tr.best-row td { background: var(--ok-bg); }
+.results tr.chosen-row td { box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent); }
+.results tr.chosen-row td:first-child { box-shadow: inset 2px 2px 0 var(--accent), inset 0 -2px 0 var(--accent); }
+.results tr.chosen-row td:last-child { box-shadow: inset -2px 2px 0 var(--accent), inset 0 -2px 0 var(--accent); }
+.choose-cell { white-space: nowrap; }
+.choose-cell .pill + .pill, .choose-cell .pill + .small-btn { margin-left: 4px; }
+.pill.chosen { background: var(--accent); color: #fff; }
 .scorebar { display: flex; height: 6px; margin-top: 4px; width: 120px; background: #eef1f6; border-radius: 3px; overflow: hidden; }
 .scorebar i { display: block; height: 100%; }
 .scorebar .d { background: #2f6fed; }

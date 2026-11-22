@@ -32,9 +32,6 @@ Usage:
     python3 generate_data.py                       # datasets/big.xlsx
     python3 generate_data.py --stats               # also print a capacity report
     python3 generate_data.py --workbook datasets/small.xlsx --out somewhere/
-
-The random-roster functions below (cohorts_from, build_full, ...) read a
-recipe (datasets/*.toml); workbook.py uses them to make the demo workbooks.
 """
 
 from __future__ import annotations
@@ -42,31 +39,14 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
-import random
 import re
 import subprocess
 import sys
 import tempfile
-import tomllib
 from dataclasses import dataclass, field
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAIN_PL = os.path.join(HERE, "main.pl")
-
-FIRST_NAMES = [
-    "Aung", "Mya", "Thandar", "Kyaw", "Nilar", "Zaw", "Hnin", "Soe", "Ei",
-    "Min", "Thiri", "Htet", "Yadanar", "Phyo", "Chan", "Nay", "Su", "Wai",
-    "Kaung", "May", "Zin", "Tun", "Khin", "Myat", "Pyae", "Shwe", "Nanda",
-    "Lwin", "Moe", "Yee",
-]
-LAST_NAMES = [
-    "Hlaing", "Oo", "Win", "Htun", "Aye", "Naing", "Lin", "Maung", "Kyi",
-    "Thu", "Swe", "Mon", "Nyein", "Sann", "Htay", "Phyu", "Zaw", "Myint",
-    "Tin", "Latt",
-]
-
-ACCESS_KINDS = ["wheelchair", "other_accessible"]
-
 
 # --------------------------------------------------------------------------
 # model
@@ -84,137 +64,30 @@ class Dataset:
     seats: list = field(default_factory=list)         # (room, row, col, type)
 
 
-@dataclass
-class Cohort:
-    major: str
-    year: int
-    students: int
-    subjects: int
-
-
 # --------------------------------------------------------------------------
-# config
+# errors and sessions
 # --------------------------------------------------------------------------
 
 class GenerationError(Exception):
     """The dataset could not be built; the message says why in plain words."""
 
 
-class ConfigError(GenerationError):
-    pass
-
-
-def load_config(path: str) -> dict:
-    with open(path, "rb") as fh:
-        return tomllib.load(fh)
-
-
-def per_year(value, years: list, what: str, major: str) -> dict:
-    """A number for every year, or a list with one number per year."""
-    if isinstance(value, int):
-        return {y: value for y in years}
-    if isinstance(value, list) and len(value) == len(years) \
-            and all(isinstance(v, int) for v in value):
-        return dict(zip(years, value))
-    raise ConfigError(
-        f"majors.{major}.{what} must be a number or a list of {len(years)} "
-        f"numbers (one per year), got {value!r}")
-
-
-def cohorts_from(cfg: dict) -> list:
-    years = cfg.get("years", [1, 2, 3, 4])
-    defaults = cfg.get("defaults", {})
-    majors = cfg.get("majors", {})
-    if not majors:
-        raise ConfigError("config has no [majors.<code>] tables")
-    out = []
-    for major, spec in majors.items():
-        if not re.fullmatch(r"[a-z][a-z0-9_]*", major):
-            raise ConfigError(f"major code {major!r} must be lowercase letters/digits")
-        students = per_year(spec.get("students", defaults.get("students", 50)),
-                            years, "students", major)
-        subjects = per_year(spec.get("subjects", defaults.get("subjects", 5)),
-                            years, "subjects", major)
-        for y in years:
-            if students[y] < 0 or subjects[y] < 0:
-                raise ConfigError(f"majors.{major}: counts cannot be negative")
-            out.append(Cohort(major, y, students[y], subjects[y]))
-    return out
-
-
-def sessions_from(cfg: dict) -> list:
-    """One session per slot per weekday of the exam period."""
-    period = cfg.get("exam_period", {})
-    day = datetime.date.fromisoformat(period.get("start_date", "2026-12-01"))
-    days = period.get("days", 8)
-    slots = period.get("slots", [["09:30", "12:30"], ["13:30", "16:30"]])
+def sessions_from(start: str, days: int, slots: list) -> list:
+    """One session per slot per weekday, from start ('2026-12-01'), weekends skipped."""
+    day = datetime.date.fromisoformat(start)
     out, used = [], 0
     while used < days:
         if day.weekday() < 5:                       # Mon-Fri
             used += 1
-            for start, end in slots:
-                out.append((f"sess{len(out) + 1}", day.isoformat(), start, end))
+            for slot_start, slot_end in slots:
+                out.append((f"sess{len(out) + 1}", day.isoformat(), slot_start, slot_end))
         day += datetime.timedelta(days=1)
     return out
-
-
-def rooms_from(cfg: dict) -> tuple:
-    spec = cfg.get("rooms", {})
-    acc_cols = spec.get("accessible_front_cols", [1, 3, 5, 7])
-    rooms, seats = [], []
-    n = 100
-    for group in spec.get("groups", []):
-        for _ in range(group["count"]):
-            n += 1
-            room_id = f"r{n}"
-            rows, cols = group["rows"], group["cols"]
-            rooms.append((room_id, rows, cols,
-                          "yes" if group.get("available", True) else "no"))
-            for row in range(1, rows + 1):
-                for col in range(1, cols + 1):
-                    kind = "accessible" if row == 1 and col in acc_cols else "normal"
-                    seats.append((room_id, row, col, kind))
-    if not rooms:
-        raise ConfigError("config has no [[rooms.groups]]")
-    return rooms, seats
 
 
 # --------------------------------------------------------------------------
 # building
 # --------------------------------------------------------------------------
-
-def subject_code(major: str, year: int, k: int) -> str:
-    """se + year 1 + subject 03 -> se103 (README section 8.1)."""
-    return f"{major}{year}{k:02d}"
-
-
-def build_full(cfg: dict) -> Dataset:
-    """Everything except the timetable (exam/2), which Prolog decides."""
-    rng = random.Random(cfg.get("seed", 20261115))
-    access_rate = cfg.get("defaults", {}).get("access_rate", 0.03)
-
-    ds = Dataset()
-    ds.sessions = sessions_from(cfg)
-    ds.rooms, ds.seats = rooms_from(cfg)
-
-    sid = 0
-    for cohort in cohorts_from(cfg):
-        codes = [subject_code(cohort.major, cohort.year, k)
-                 for k in range(1, cohort.subjects + 1)]
-        if cohort.students:
-            ds.subjects.extend(codes)
-        for _ in range(cohort.students):
-            sid += 1
-            student_id = f"s{sid:04d}"
-            access = (rng.choice(ACCESS_KINDS)
-                      if rng.random() < access_rate else "none")
-            ds.students.append((student_id, cohort.major, cohort.year, access))
-            ds.names.append((student_id,
-                             f"{rng.choice(FIRST_NAMES)} {rng.choice(LAST_NAMES)}"))
-            for code in codes:
-                ds.enrolments.append((student_id, code))
-    return ds
-
 
 def run_timetabler(ds: Dataset, fill: int) -> tuple:
     """Hand the dataset (without exams) to timetable.pl; return the exams."""
@@ -409,26 +282,6 @@ def check_and_report(ds: Dataset, label: str, verbose: bool) -> None:
     if seats_total:
         print(f"\npeak session load {peak} / {seats_total} seats "
               f"({100 * peak / seats_total:.0f}% occupancy)")
-
-
-def generate(cfg: dict, verbose: bool = False) -> tuple:
-    """config dict -> (Dataset with its timetable, timetable summary line).
-
-    Everything `make data` does except writing the file. Raises
-    GenerationError with a readable message when the config is wrong or the
-    exams cannot be timetabled.
-    """
-    try:
-        full = build_full(cfg)
-    except (KeyError, ValueError, TypeError) as exc:
-        raise ConfigError(f"bad config: {exc}") from exc
-    fill = cfg.get("timetable", {}).get("max_fill_percent", 80)
-    full.exams, summary = run_timetabler(full, fill)
-    try:
-        check_and_report(full, "dataset", verbose)
-    except AssertionError as exc:
-        raise GenerationError(str(exc)) from exc
-    return full, summary
 
 
 def main() -> None:
