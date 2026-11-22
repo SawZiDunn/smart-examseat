@@ -28,7 +28,7 @@ Filters are `filters(Years, Majors)`. An empty list means "everyone":
 ## 2. Automated tests
 
 ```bash
-make test            # everything (68 Prolog + 59 Python)
+make test            # everything (80 Prolog + 61 Python, about 45 s)
 make test-prolog     # plunit only:  swipl -q -g run_tests -t halt tests/test_prolog.pl
 make test-python     # bridge, web app, export and config tests
 ```
@@ -108,7 +108,8 @@ Open `http://127.0.0.1:5000/?view=term` to go straight to the whole-term view.
 **One session**
 - [ ] `sess1`, no filters: about 585 students in 6 rooms; the validator says valid
 - [ ] Tick year 1 and major SE: the counts drop and only those students appear
-- [ ] Room tabs: same-exam students never sit side by side; accessible students sit in the marked seats
+- [ ] Room tabs: each exam has its own colour; same-exam students never sit side by side; students marked **A** sit in the accessible seats
+- [ ] Seats fill column by column, so each cohort sits as a block of columns
 - [ ] Search the student list for an ID and find their room and seat
 - [ ] **Validate** gives the same verdict as the generate step
 - [ ] Download the CSV, room-summary CSV and PDF, and open each one
@@ -149,7 +150,7 @@ SMARTEXAMSEAT_DATA=tests/scenarios/<name>.pl swipl -q -g "build_timetable([fill(
 
 All of these are also checked automatically by the `scenarios` and `timetable` blocks in `tests/test_prolog.pl`.
 
-**Writing your own:** copy one of these files and edit the facts. The schema is in `details/CONTRACT.md` §3. Every student needs a `student/4`, a `student_name/2` and at least one `enrolled/2`. Every room needs a `room/4` and one `seat/4` per seat. To test seating, include `exam/2` facts, and make sure no student has two exams in the same session.
+**Writing your own:** copy one of these files and edit the facts. The schema is in [README.md section 8.2](README.md#82-facts-datapl-generated). Every student needs a `student/4`, a `student_name/2` and at least one `enrolled/2`. Every room needs a `room/4` and one `seat/4` per seat. To test seating, include `exam/2` facts, and make sure no student has two exams in the same session.
 
 ## 6. Changing the dataset: `config.toml`
 
@@ -192,5 +193,35 @@ Tested with the default students and rooms:
 | 8 (default) | 16 | timetable built; busiest session at 41% of seats; every session seats and validates |
 | 5 | 10 | timetable built; busiest session at 67% of seats; every session seats and validates |
 | 3 | 6 | refused: at least 9 sessions are needed |
+
+### The small demo dataset: `config_small.toml`
+
+A second config that is easy to picture, for demos. It is only a template:
+copy it over `config.toml` to use it.
+
+|        | SE | CS | EE |
+|---|---|---|---|
+| year 1 | 30 students, 3 subjects | 30 students, 3 subjects | - |
+| year 2 | 20 students, 2 subjects | 20 students, 2 subjects | 20 students, 2 subjects |
+
+120 students, 12 subjects, 3 exam days x 2 slots = 6 sessions, 2 open rooms
+of 8x8 (128 seats) and 1 closed room.
+
+```bash
+cp config.toml config_full.toml          # keep the full config
+cp config_small.toml config.toml
+make data && make run
+
+# afterwards
+cp config_full.toml config.toml && make data
+```
+
+While the small set is in `data.pl`, some Python tests fail, because they
+expect the full dataset. Switch back before running `make test`.
+
+The timetable it produces puts each year-1 student's 3 exams on 3 different
+days and seats every session in 1-2 rooms with no retries.
+
+### The test sample
 
 The 20-student `data_sample.pl` is fixed, defined in `build_sample()` in `generate_data.py`. The tests read their expected student and subject counts from `config.toml`, so changing the config does not break them, as long as the exams still fit.

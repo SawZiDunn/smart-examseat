@@ -2,8 +2,8 @@
 """
 SmartExamSeat - dataset generator (Member A).
 
-Reads config.toml and writes Prolog fact files that follow the schema frozen
-in CONTRACT.md:
+Reads config.toml and writes Prolog fact files that follow the schema in
+README.md section 8.2:
 
     student(Id, Major, Year, Access).
     student_name(Id, Name).
@@ -178,7 +178,7 @@ def rooms_from(cfg: dict) -> tuple:
 # --------------------------------------------------------------------------
 
 def subject_code(major: str, year: int, k: int) -> str:
-    """se + year 1 + subject 03 -> se103 (CONTRACT: codes like cs101)."""
+    """se + year 1 + subject 03 -> se103 (README section 8.1)."""
     return f"{major}{year}{k:02d}"
 
 
@@ -287,7 +287,7 @@ def write_prolog(path: str, ds: Dataset, title: str) -> None:
     lines = [
         f"% {title}",
         "% GENERATED FILE - produced by generate_data.py from config.toml,",
-        "% do not edit by hand. Schema is frozen in CONTRACT.md section 3.",
+        "% do not edit by hand. Schema: README.md section 8.2.",
         "",
         ":- discontiguous student/4.",
         ":- discontiguous student_name/2.",

@@ -8,7 +8,7 @@
 %   validate_seating(+Session, +Filters, +Assignments, -Report)
 %   Report = valid | invalid([violation(Rule, Details), ...])
 %
-% Rule is one of (CONTRACT.md section 5.1):
+% Rule is one of (README.md section 8.4):
 %   one_seat_per_student, seat_unique, room_capacity, room_available,
 %   accessibility, exam_clash, separation, missing_student
 % ===========================================================================

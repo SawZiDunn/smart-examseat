@@ -11,50 +11,129 @@ Satisfaction Problem in Prolog** with a Python/Flask admin interface.
 | 67011619 | May Nyein Chan |
 | 67011653 | Saw Zi Dunn |
 
-```
-config.toml ──▶ Data + Timetable ──▶ Allocation ──▶ Seat Solver ──▶ Validator ──▶ UI ──▶ CSV/PDF
-                  (A, CSP #1)           (A)         (B, CSP #2)        (A)        (C)      (C)
-```
-
 ---
 
-## 1. What it does
+## 1. How it works
 
-**Before the term** - the administrator describes the faculty in
-`config.toml`: how many students and how many subjects each (major, year)
-cohort has, the rooms, and the exam period. `make data` generates the
-students and each cohort's own subjects, then a **timetabling CSP** in Prolog
-decides which session (time slot) every subject is examined in, so that no
-student has two exams at once and no session holds more students than the
-rooms can seat.
+```mermaid
+flowchart TD
+    cfg["<b>config.toml</b><br/>majors, years, students and subjects<br/>per cohort, rooms, exam period"]
+    gen["<b>generate_data.py</b><br/>students, subjects, enrolments,<br/>rooms and seats"]
+    tt["<b>timetable.pl</b> - CSP #1<br/>which session each subject is in"]
+    data[("<b>data.pl</b><br/>facts + exam/2 timetable")]
+    cfg --> gen --> tt --> data
+    data --> pick
+    subgraph one ["One session (or every session with Seat every session)"]
+        pick["<b>students_in_session/3</b><br/>who sits this session,<br/>after the year/major filters"]
+        alloc["<b>allocate_rooms/3</b><br/>split them across the open rooms"]
+        solve["<b>solve_room/4</b> - CSP #2<br/>a seat for every student, room by room"]
+        re["<b>reallocate/4</b><br/>move students or open another room"]
+        val["<b>validate_seating/4</b><br/>re-check every hard rule"]
+        pick --> alloc --> solve
+        solve -- "a room fails" --> re --> solve
+        solve -- "every room solved" --> val
+    end
+    val --> ui["<b>app.py</b> (Flask)<br/>seat grids, whole-term coverage"] --> out["<b>export.py</b><br/>CSV / PDF"]
+```
 
-**For one session** (e.g. Tuesday 09:00-12:00) the administrator optionally
-narrows the population by **year level** and **major**. A live counter shows
-*selected / seats* and will not let the selection exceed the open rooms. The
-system then:
+Who owns each stage (if the diagram above does not render, this is the same pipeline):
 
-1. finds every student sitting an exam in that session,
-2. splits them across the available examination rooms (*allocation*),
-3. finds a concrete seat for every student inside their room by
-   **backtracking search over a CSP** (*seat solving*),
-4. re-checks the finished plan against every hard constraint
-   (*validation*), and
-5. shows the seat grid per room and exports CSV / PDF.
+```
+config.toml → Data + Timetable → Allocation → Seat Solver → Validator → UI → CSV/PDF
+                (A, CSP #1)         (A)        (B, CSP #2)      (A)      (C)    (C)
+```
 
-**For the whole term**, *Seat every session* (or `make term`) runs every
-session and shows a year x major table of exams seated per cohort, so the
-administrator can see that every cohort is finished.
+### Step by step
+
+**Once per term (before the exams)**
+
+1. **Describe the term.** In `config.toml` the administrator sets the majors,
+   the year levels, how many students and subjects each (major, year) cohort
+   has, the rooms, and the exam period (days x time slots = sessions).
+2. **Generate the data.** `make data` runs `generate_data.py`, which reads
+   `config.toml` and writes 2 files: `data.pl` (the full dataset, including
+   the exam timetable built by `timetable.pl`) and `data_sample.pl` (a fixed
+   20-student test set, not affected by `config.toml`). The data holds the
+   students of every cohort, each cohort's own subjects (`se101`, `se102`,
+   ... `ce203`), the enrolments, the rooms and their seats.
+3. **Build the timetable (CSP #1).** `timetable.pl` is a Prolog program that
+   decides which session each subject is examined in. `generate_data.py`
+   calls it, and its output is included in `data.pl`. By the time `data.pl`
+   is written, every subject already has its session:
+
+   ```prolog
+   exam(se101, sess1).
+   exam(se102, sess3).
+   ```
+
+   No student has two exams at once, no session holds more than 80% of the
+   open seats, and where it can, it avoids giving a student two exams on one
+   day. If the exams cannot fit, the generator stops with a reason and leaves
+   `data.pl` unchanged. How the decision is made is in section 4.6.
+
+   **The timetable is fixed.** Once `make data` has run, `se101` is examined
+   in `sess1` (Tuesday 1 Dec, 09:00-12:00) and nowhere else, and all 60
+   year-1 SE students sit it then, together. Each subject gets exactly one
+   session. You don't pick sessions by hand: the timetabler picks them
+   automatically. The timetable stays the same until you run `make data`
+   again. Re-running with the same `config.toml` gives the same timetable,
+   because the seed is fixed. If you change the config (more days, different
+   student counts and so on), the sessions can change.
+
+**For each session (in the UI)**
+
+4. **Pick a session and who to seat.** The administrator chooses a session
+   (e.g. Tuesday 09:00-12:00) and can narrow it by year and major. A live
+   counter shows *selected / seats*, and the UI refuses a selection larger
+   than the open rooms.
+   - Choosing a session decides which exams are seated. Picking `sess1` seats
+     everyone whose subject is in `sess1`, including the year-1 SE students
+     for `se101`.
+   - The year and major filters only narrow who gets seated. For example,
+     `sess1` + year 1 + SE seats only those 60 students for `se101`. The
+     filters can't move `se101` to another session.
+5. **Collect the students.** `students_in_session/3` lists everyone sitting
+   an exam in that session who matches the filters, as
+   `[s(Student, Exam), ...]`.
+6. **Split them across rooms.** `allocate_rooms/3` keeps each cohort
+   together where it can, sends students who need an accessible seat to
+   rooms that have them, and never puts more students of one exam in a room
+   than the separation rule allows.
+7. **Seat them (CSP #2).** `solve_room/4` in `solver.pl` gives every student
+   in a room a seat by backtracking search. If a room cannot be solved, it
+   says why; `reallocate/4` moves some students out and the room is tried
+   again, and as a last resort another room is opened.
+8. **Check the plan.** `validate_seating/4` re-checks the finished plan
+   against every hard rule, independently of the solver, and explains any
+   violation in a sentence.
+9. **Show and export.** The Flask app draws every room's seat grid, lets you
+   search for a student, and exports CSV and PDF through `export.py`. Both
+   the Prolog code and the Python code use `data.pl`: Python never reads it
+   directly, it queries Prolog through `bridge.py` (pyswip), which returns
+   JSON.
+
+**For the whole term**
+
+10. **Seat every session.** *Seat every session* in the UI (or `make term`)
+    repeats steps 5-8 for all 16 sessions, so every subject is seated in its
+    own session. It shows a year x major table of exams seated per cohort; a
+    cohort is finished when all of its exams are seated.
+
+### Speed
 
 On the default config (1,940 students, 191 subjects, 16 sessions, 14 open
 rooms) the timetable is built in about 0.2 s, each session of ~580 students
-is seated and validated in about **20 ms**, and the whole term in under 1 s.
+is seated and validated in **0.1-1 s** (6-8 rooms, up to 6 allocation
+retries), and the whole term in about 10 s.
 
 ```
 session    students    rooms     retries     validator
-sess1      585         6         0           valid (20 ms)
-sess2      580         6         0           valid (16 ms)
+sess1      585         6         1           valid (239 ms)
+sess2      580         7         5           valid (913 ms)
 ...
-sess16     575         6         0           valid (14 ms)
+sess13     575         6         0           valid (61 ms)
+...
+sess16     575         8         5           valid (818 ms)
 ```
 
 ---
@@ -69,6 +148,13 @@ pip install -r requirements.txt
 make data                            # config.toml -> data.pl (+ timetable)
 python3 app.py                       # http://127.0.0.1:5000
 ```
+
+Run `make data` (or `python3 generate_data.py --stats`) in the project root,
+with the venv active.
+
+The `Makefile` just gives short names to longer commands you would otherwise
+type by hand (`make data`, `make demo`, `make test`, ...). It doesn't build or
+compile anything.
 
 Useful variants:
 
@@ -111,13 +197,16 @@ swipl main.pl
 | `export.py` | C | CSV and PDF generation |
 | `templates/`, `static/` | C | the web front end |
 | `demo.pl` | all | console demonstration |
-| `tests/test_prolog.pl` | all | 68 plunit tests |
+| `tests/test_prolog.pl` | all | 80 plunit tests |
 | `tests/scenarios/` | all | tiny edge-case datasets for seating and timetabling |
 | `TESTING.md` | all | every way to test the system, and how to change the dataset size |
-| `tests/test_pipeline.py` | all | 59 Python tests (bridge, UI, exports, config, capacity) |
+| `tests/test_pipeline.py` | all | 61 Python tests (bridge, UI, exports, config, capacity) |
 
-The shared interface between the three members is frozen in
-[`details/CONTRACT.md`](details/CONTRACT.md).
+The facts and predicates each part relies on are listed in
+[section 8](#8-interface-reference). If something breaks: wrong students,
+clashes or a bad room split go to A; seat conflicts or solver timeouts go to
+B; UI, parsing or export problems go to C. When the validator reports a
+violation, A confirms the validator is right, then the owner of the source fixes it.
 
 ---
 
@@ -217,6 +306,21 @@ means the search may have been inconclusive; it is not reported as a proven
 | **Hard constraints** | two subjects that share a student go in different sessions (this is what guarantees the `exam_clash` rule); a session's headcount <= open seats x `max_fill_percent`; a session's accessible headcount <= accessible seats |
 | **Soft constraints** | a student should not have two exams on the same day; the load should be spread evenly |
 
+The decision is made by two predicates:
+
+* `place/6` takes the subjects one at a time, largest first, and tries
+  sessions with `member/2`. If a later subject gets stuck, Prolog backtracks
+  and tries another session.
+* `candidates/7` lists the sessions allowed for one subject. It drops
+  sessions that break a hard rule:
+  * a subject that shares a student with this one is already in that
+    session (a clash);
+  * the session would go over 80% of the seats;
+  * the session would go over the accessible seats.
+
+  It sorts what's left by: fewest same-day exams for those students, then
+  the emptiest session, then the earliest.
+
 The same pattern as the seat solver: `member/2` over an ordered domain, with
 a bounded inference budget.
 
@@ -264,12 +368,12 @@ make test
 For every way to test (console, UI checklist, edge-case datasets, changing
 the dataset size) see [`TESTING.md`](TESTING.md).
 
-* `tests/test_prolog.pl` - 68 plunit tests: dataset integrity, filters,
-  allocation invariants, solver success and each of its three failure
+* `tests/test_prolog.pl` - 80 plunit tests: dataset integrity, filters,
+  allocation invariants, solver success and each of its four failure
   reasons, nine *injected* violations the validator must catch, the
   edge-case datasets in `tests/scenarios/`, the timetabler (clash-free,
   within capacity, and each failure reason), and the whole-term run.
-* `tests/test_pipeline.py` - 59 tests: the Prolog-term parser, the bridge
+* `tests/test_pipeline.py` - 61 tests: the Prolog-term parser, the bridge
   (both the raw `ok(...)`/`failed(...)` route and the JSON route), every
   session solving and validating, CSV/PDF output, every HTTP endpoint, the
   capacity check, the whole-term endpoint, and config parsing.
@@ -300,14 +404,106 @@ this independently before writing `data.pl`, as does the
 
 ---
 
-## 8. Known limits
+## 8. Interface reference
 
-* Seating enforces hard constraints only. Soft preferences (same major
-  sitting near each other, invigilator workload) are not modelled. The
+The names every part relies on. If you change one, update this section and
+tell the others.
+
+### 8.1 Naming
+
+All Prolog atoms are lowercase. Students `s0001`, ...; subjects
+`<major><year><nn>`, e.g. `se103`; sessions `sess1`, ...; rooms `r101`, ...;
+majors `se`, `ce`, ... (shown uppercase in the UI); years `1`-`4`; rows and
+columns start at `1`.
+
+### 8.2 Facts (`data.pl`, generated)
+
+```prolog
+student(Id, Major, Year, Access).          % Access = none | wheelchair | other_accessible
+student_name(Id, Name).
+subject(Code).
+enrolled(Id, Code).
+exam(Code, Session).                       % the timetable
+session_time(Session, Date, Start, End).   % session_time(sess1, '2026-12-01', '09:00', '12:00')
+room(RoomId, Rows, Cols, Available).       % Available = yes | no
+seat(RoomId, Row, Col, SeatType).          % SeatType = normal | accessible
+```
+
+A student has at most one exam per session; only `Available = yes` rooms are
+used; students with `Access \= none` only sit on `accessible` seats.
+
+### 8.3 Shared shapes
+
+| Name | Shape |
+|---|---|
+| Filters | `filters(Years, Majors)`; an empty list means everyone, e.g. `filters([1,2], [se,cs])` |
+| Student entry | `s(StudentId, ExamCode)` |
+| Assignment | `assign(StudentId, ExamCode, RoomId, Row, Col)` |
+| Room group | `room_group(RoomId, [s(StudentId, ExamCode), ...])` |
+
+### 8.4 Predicates
+
+| Predicate | File | Result |
+|---|---|---|
+| `build_timetable(+Options, -Result)` | `timetable.pl` | `ok([Subject-Session, ...], stats(SameDayPairs, Peak, Limit, Sessions))` or `failed(no_sessions \| subject_too_large(S, Size, Max) \| too_few_sessions(Need, Have) \| no_timetable(N))` |
+| `students_in_session(+Session, +Filters, -Students)` | `allocation.pl` | `[s(Id, Exam), ...]` |
+| `allocate_rooms(+Session, +Students, -Allocation)` | `allocation.pl` | `[room_group(Room, Students), ...]` |
+| `reallocate(+Session, +FailedRoom, +Reason, -Allocation)` | `allocation.pl` | a new allocation that moves students out of the failed room |
+| `solve_room(+Session, +RoomId, +Students, -Result)` | `solver.pl` | `ok([assign(...), ...])` or `failed(Reason)` |
+| `generate_seating(+Session, +Filters, -Result)` | `main.pl` | the whole session: `ok(Assignments)` or `failed(Reason)`; `generate_seating/4` adds `stats(Students, Rooms, Retries, Ms)` |
+| `validate_seating(+Session, +Filters, +Assignments, -Report)` | `validator.pl` | `valid` or `invalid([violation(Rule, Details), ...])`; `explain_violation/2` turns one into a sentence |
+| `seat_term(-Sessions, -Coverage)` | `main.pl` | every session's result plus `cohort(Major, Year, Seated, Total)` per cohort |
+| `session_cohorts/2`, `selection_size/4`, `total_capacity/2` | `main.pl`, `rules.pl` | the numbers behind the UI's *selected / seats* counter |
+| `list_sessions/1`, `list_majors/1`, `list_years/1`, `room_layout/4` | `allocation.pl` | lists for the UI |
+
+The seat solver's failure reasons:
+
+```prolog
+not_enough_seats(RoomId, Needed, Have)
+not_enough_accessible(RoomId, Needed, Have)
+no_solution(RoomId)       % proven: no seating exists
+search_limit(RoomId)      % the search budget ran out; reallocation is tried
+```
+
+Validator rules: `one_seat_per_student`, `seat_unique`, `room_capacity`,
+`room_available`, `accessibility`, `exam_clash`, `separation`,
+`missing_student`.
+
+### 8.5 Constants (`rules.pl`)
+
+```prolog
+min_separation(1).   % same-exam students in one row need >= 1 empty seat between them
+max_retries(3).      % reallocations that only reshuffle, before another room is opened
+```
+
+### 8.6 Calling it from Python
+
+`main.pl` is not a module, so after consulting it the predicates are called
+by plain name:
+
+```python
+from pyswip import Prolog
+prolog = Prolog()
+prolog.consult("main.pl")
+result = list(prolog.query("generate_seating(sess1, filters([1,2],[se,cs]), R)"))[0]["R"]
+```
+
+`bridge.py` wraps this: `generate_raw()` parses the `ok(...)` / `failed(...)`
+term itself, and `generate()` uses the JSON helpers in `main.pl`
+(`seating_report_json/3` and friends), which the web UI uses because it is
+faster.
+
+---
+
+## 9. Known limits
+
+* Seating enforces hard constraints only. Keeping a cohort in one room is a
+  heuristic of the allocator, not a constraint, and invigilator workload is
+  not modelled. Packing rooms tightly for cohort fit costs speed: most
+  sessions need several allocation retries before every room solves. The
   timetabler has two soft preferences (one exam per day per student, even
   load) expressed through value ordering.
-* `min_separation(1)` applies inside a row only, which is the rule stated in
-  the contract. Diagonal and front-to-back neighbours are unconstrained.
+* `min_separation(1)` applies inside a row only. Diagonal and front-to-back neighbours are unconstrained.
 * The seating retry loop reshuffles rooms but never changes the timetable.
   The timetabler keeps each session within capacity, and the UI refuses a
   selection larger than the open rooms; if rooms are closed after the

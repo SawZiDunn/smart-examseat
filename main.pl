@@ -84,7 +84,7 @@ dataset_summary(dataset(Students, Subjects, Sessions, Rooms, Seats)) :-
 
 
 % ===========================================================================
-% generate_seating/3  (CONTRACT.md section 5.2)
+% generate_seating/3  (README.md section 8.4)
 % ===========================================================================
 
 %! generate_seating(+Session, +Filters, -Result) is det.

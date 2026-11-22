@@ -500,7 +500,7 @@ open_extra_room(FailedRoomId, Slots0,
 
 
 % ===========================================================================
-% 4. Helper predicates for the UI (CONTRACT.md section 5.3)
+% 4. Helper predicates for the UI (README.md section 8.4)
 % ===========================================================================
 
 %! list_sessions(-Sessions) is det.

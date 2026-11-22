@@ -40,7 +40,7 @@
 
 
 % ---------------------------------------------------------------------------
-% 1. Constants (CONTRACT.md section 6)
+% 1. Constants (README.md section 8.5)
 % ---------------------------------------------------------------------------
 
 %! min_separation(-N) is det.
@@ -161,7 +161,7 @@ separation_ok(_Row, Col, Cols) :-
 
 
 % ---------------------------------------------------------------------------
-% 5. Filters (CONTRACT.md section 4)
+% 5. Filters (README.md section 8.3)
 % ---------------------------------------------------------------------------
 
 %! matches_filters(+StudentId, +Filters) is semidet.

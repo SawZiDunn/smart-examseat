@@ -1,6 +1,6 @@
 % SmartExamSeat tiny sample dataset
 % GENERATED FILE - produced by generate_data.py from config.toml,
-% do not edit by hand. Schema is frozen in CONTRACT.md section 3.
+% do not edit by hand. Schema: README.md section 8.2.
 
 :- discontiguous student/4.
 :- discontiguous student_name/2.

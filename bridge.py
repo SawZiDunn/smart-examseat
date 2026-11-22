@@ -3,14 +3,14 @@
 bridge.py - the pyswip bridge between the Prolog engine and Python (Member C).
 
 Loads main.pl (which consults rules.pl, allocation.pl, solver.pl, validator.pl
-and the dataset), calls the predicates frozen in CONTRACT.md and turns their
+and the dataset), calls the predicates listed in README.md section 8.4 and turns their
 answers into plain Python objects.
 
 Two routes into Prolog are provided:
 
   * generate_raw()  - calls generate_seating/3 and parses the raw
-                      ok(...) / failed(...) term exactly as CONTRACT.md
-                      section 7 describes. Used by the tests.
+                      ok(...) / failed(...) term as README.md
+                      section 8.6 describes. Used by the tests.
   * generate()      - calls the seating_report_json/3 helper, which returns
                       one JSON atom containing the plan, the validator report
                       and timing stats. Used by the web UI, because shipping
@@ -62,7 +62,7 @@ class PrologError(RuntimeError):
 # pyswip hands compound terms back as text in the version we use, so instead
 # of poking at its internal Functor objects we ask Prolog for the canonical
 # text of the term (term_to_atom/2) and parse it here. That is exactly the
-# "C parses ok(...) / failed(...)" step from CONTRACT.md section 7.
+# "C parses ok(...) / failed(...)" step from README.md section 8.6.
 
 
 class Compound:
@@ -336,7 +336,7 @@ class SeatingEngine:
     # -- generation --------------------------------------------------------
 
     def generate_raw(self, session, years=None, majors=None):
-        """CONTRACT section 7 route: parse the ok/1 | failed/1 term ourselves.
+        """README section 8.6 route: parse the ok/1 | failed/1 term ourselves.
 
         Returns ("ok", [Assignment, ...]) or ("failed", reason_dict).
         """
