@@ -12,11 +12,13 @@
 :- discontiguous seat/4.
 :- dynamic exam/2.
 
-% ---- sessions (4) ----
+% ---- sessions (6) ----
 session_time(sess1, '2026-12-01', '09:00', '12:00').
 session_time(sess2, '2026-12-01', '13:00', '16:00').
 session_time(sess3, '2026-12-02', '09:00', '12:00').
 session_time(sess4, '2026-12-02', '13:00', '16:00').
+session_time(sess5, '2026-12-03', '09:00', '12:00').
+session_time(sess6, '2026-12-03', '13:00', '16:00').
 
 % ---- subjects (12) ----
 subject(se101).
@@ -35,23 +37,22 @@ subject(ee202).
 % ---- exams (timetable from timetable.pl) (12) ----
 exam(cs101, sess1).
 exam(cs102, sess3).
-exam(cs103, sess2).
-exam(cs201, sess3).
-exam(cs202, sess1).
-exam(ee201, sess4).
-exam(ee202, sess2).
-exam(se101, sess4).
-exam(se102, sess1).
-exam(se103, sess2).
-exam(se201, sess3).
+exam(cs103, sess5).
+exam(cs201, sess1).
+exam(cs202, sess3).
+exam(ee201, sess2).
+exam(ee202, sess4).
+exam(se101, sess2).
+exam(se102, sess4).
+exam(se103, sess6).
+exam(se201, sess5).
 exam(se202, sess1).
 
-% ---- rooms (3) ----
+% ---- rooms (2) ----
 room(r101, 8, 8, yes).
 room(r102, 8, 8, yes).
-room(r103, 8, 8, no).
 
-% ---- seats (192) ----
+% ---- seats (128) ----
 seat(r101, 1, 1, accessible).
 seat(r101, 1, 2, normal).
 seat(r101, 1, 3, accessible).
@@ -180,70 +181,6 @@ seat(r102, 8, 5, normal).
 seat(r102, 8, 6, normal).
 seat(r102, 8, 7, normal).
 seat(r102, 8, 8, normal).
-seat(r103, 1, 1, accessible).
-seat(r103, 1, 2, normal).
-seat(r103, 1, 3, accessible).
-seat(r103, 1, 4, normal).
-seat(r103, 1, 5, accessible).
-seat(r103, 1, 6, normal).
-seat(r103, 1, 7, accessible).
-seat(r103, 1, 8, normal).
-seat(r103, 2, 1, normal).
-seat(r103, 2, 2, normal).
-seat(r103, 2, 3, normal).
-seat(r103, 2, 4, normal).
-seat(r103, 2, 5, normal).
-seat(r103, 2, 6, normal).
-seat(r103, 2, 7, normal).
-seat(r103, 2, 8, normal).
-seat(r103, 3, 1, normal).
-seat(r103, 3, 2, normal).
-seat(r103, 3, 3, normal).
-seat(r103, 3, 4, normal).
-seat(r103, 3, 5, normal).
-seat(r103, 3, 6, normal).
-seat(r103, 3, 7, normal).
-seat(r103, 3, 8, normal).
-seat(r103, 4, 1, normal).
-seat(r103, 4, 2, normal).
-seat(r103, 4, 3, normal).
-seat(r103, 4, 4, normal).
-seat(r103, 4, 5, normal).
-seat(r103, 4, 6, normal).
-seat(r103, 4, 7, normal).
-seat(r103, 4, 8, normal).
-seat(r103, 5, 1, normal).
-seat(r103, 5, 2, normal).
-seat(r103, 5, 3, normal).
-seat(r103, 5, 4, normal).
-seat(r103, 5, 5, normal).
-seat(r103, 5, 6, normal).
-seat(r103, 5, 7, normal).
-seat(r103, 5, 8, normal).
-seat(r103, 6, 1, normal).
-seat(r103, 6, 2, normal).
-seat(r103, 6, 3, normal).
-seat(r103, 6, 4, normal).
-seat(r103, 6, 5, normal).
-seat(r103, 6, 6, normal).
-seat(r103, 6, 7, normal).
-seat(r103, 6, 8, normal).
-seat(r103, 7, 1, normal).
-seat(r103, 7, 2, normal).
-seat(r103, 7, 3, normal).
-seat(r103, 7, 4, normal).
-seat(r103, 7, 5, normal).
-seat(r103, 7, 6, normal).
-seat(r103, 7, 7, normal).
-seat(r103, 7, 8, normal).
-seat(r103, 8, 1, normal).
-seat(r103, 8, 2, normal).
-seat(r103, 8, 3, normal).
-seat(r103, 8, 4, normal).
-seat(r103, 8, 5, normal).
-seat(r103, 8, 6, normal).
-seat(r103, 8, 7, normal).
-seat(r103, 8, 8, normal).
 
 % ---- students (120) ----
 student(s0001, se, 1, none).

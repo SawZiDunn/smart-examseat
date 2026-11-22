@@ -146,9 +146,19 @@ def index():
                            dataset=engine().dataset)
 
 
+@app.route("/data")
+def data_page():
+    return render_template("data.html", dataset=engine().dataset)
+
+
 # ---------------------------------------------------------------------------
 # API
 # ---------------------------------------------------------------------------
+
+@app.route("/api/dataset")
+def api_dataset():
+    return jsonify(engine().dataset_contents())
+
 
 @app.route("/api/catalogue")
 def api_catalogue():

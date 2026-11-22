@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SmartExamSeat - Data</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">SES</span>
+    <div>
+      <h1>SmartExamSeat</h1>
+      <p>What is in the data file, before any seating</p>
+    </div>
+  </div>
+  <a class="dataset dataset-link" href="{{ url_for('index') }}" title="Back to seating">
+    <code>&larr; Back to seating</code>
+    <span>{{ dataset }}</span>
+  </a>
+</header>
+
+<div class="datapage">
+  <div id="loading" class="status busy">Loading {{ dataset }}&hellip;</div>
+  <div id="failed" class="status error hidden"></div>
+
+  <div id="page" class="hidden">
+    <div class="statbar" id="summary"></div>
+
+    <nav class="room-tabs data-tabs" id="tabs">
+      <button class="tab active" data-tab="cohorts">Cohorts <small>major &times; year</small></button>
+      <button class="tab" data-tab="timetable">Timetable <small>who sits when</small></button>
+      <button class="tab" data-tab="students">Students <small id="tab-nstudents"></small></button>
+      <button class="tab" data-tab="rooms">Rooms <small id="tab-nrooms"></small></button>
+    </nav>
+
+    <!-- cohorts: majors x years -->
+    <section class="list-wrap" data-panel="cohorts">
+      <div class="list-head">
+        <h2>Students and subjects per cohort</h2>
+        <span class="hint">Each cell is one (major, year) cohort: how many students, and the subjects they all sit with the session each one is in.</span>
+      </div>
+      <div class="table-scroll"><table class="matrix" id="cohorts"></table></div>
+    </section>
+
+    <!-- timetable: days x slots -->
+    <section class="list-wrap hidden" data-panel="timetable">
+      <div class="list-head">
+        <h2>Exam timetable</h2>
+        <span class="hint">Built by <code>timetable.pl</code> when the data was generated. Click a cohort to seat just that cohort in that session, or <em>Seat this session</em> for everyone.</span>
+      </div>
+      <div class="table-scroll"><table class="timetable" id="timetable"></table></div>
+    </section>
+
+    <!-- students -->
+    <section class="list-wrap hidden" data-panel="students">
+      <div class="list-head">
+        <h2>Students <small id="scount" class="muted"></small></h2>
+        <div class="filters">
+          <input id="ssearch" type="search" placeholder="Search ID or name">
+          <select id="smajor"><option value="">All majors</option></select>
+          <select id="syear"><option value="">All years</option></select>
+          <label class="check"><input id="saccess" type="checkbox"> Needs accessible seat</label>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="students">
+          <thead><tr><th>ID</th><th>Name</th><th>Major</th><th>Year</th><th>Access</th><th>Exams (session)</th></tr></thead>
+          <tbody id="srows"></tbody>
+        </table>
+      </div>
+      <button id="smore" class="hidden">Show all</button>
+    </section>
+
+    <!-- rooms -->
+    <section class="list-wrap hidden" data-panel="rooms">
+      <div class="list-head">
+        <h2>Rooms</h2>
+        <div class="legend">
+          <span class="key"><i class="mini-seat"></i> seat</span>
+          <span class="key"><i class="mini-seat acc"></i> accessible seat</span>
+          <span class="muted">front of the room is at the top</span>
+        </div>
+      </div>
+      <div class="rooms" id="rooms"></div>
+    </section>
+  </div>
+</div>
+
+<script>
+const S = { data: null, subjects: {}, sessions: {}, majorHue: {}, showAll: false };
+const PAGE = 250;
+
+const esc = v => String(v).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const MAJ = m => String(m).toUpperCase();
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function dayLabel(iso) {
+  const d = new Date(iso + "T00:00:00");
+  return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+function sessLabel(id) {
+  const s = S.sessions[id];
+  return s ? `${dayLabel(s.date)} ${s.start}` : "not timetabled";
+}
+function dot(major) {
+  return `<i class="mdot" style="background:hsl(${S.majorHue[major]} 62% 50%)"></i>`;
+}
+function examChip(code) {
+  const sub = S.subjects[code];
+  const sess = sub ? sub.session : "";
+  return `<span class="xchip" title="${esc(code)}: ${esc(sessLabel(sess))}">` +
+         `<b>${esc(code)}</b><small>${esc(sess || "-")}</small></span>`;
+}
+
+// ---------- summary ----------
+function renderSummary(d) {
+  const open = d.rooms.filter(r => r.available === "yes");
+  const enrol = d.subjects.reduce((n, s) => n + s.students, 0);
+  const acc = d.students.filter(s => s.access !== "none").length;
+  const cards = [
+    ["Students", d.students.length, `${acc} need an accessible seat`],
+    ["Subjects", d.subjects.length, `${d.majors.length} majors, ${d.years.length} years`],
+    ["Exam seats", enrol, "one per student per exam"],
+    ["Sessions", d.sessions.length, `${new Set(d.sessions.map(s => s.date)).size} days`],
+    ["Rooms open", open.length, `${d.rooms.length - open.length} closed`],
+    ["Seats per session", d.seats, `${d.accessible_seats} accessible`],
+  ];
+  document.getElementById("summary").innerHTML = cards.map(([k, v, sub]) =>
+    `<div class="stat"><span>${k}</span><b>${v.toLocaleString()}</b><small>${esc(sub)}</small></div>`
+  ).join("");
+  document.getElementById("tab-nstudents").textContent = d.students.length;
+  document.getElementById("tab-nrooms").textContent = d.rooms.length;
+}
+
+// ---------- cohorts ----------
+function renderCohorts(d) {
+  const cell = {};                                   // "se|1" -> {n, acc, subjects}
+  for (const s of d.students) {
+    const k = s.major + "|" + s.year;
+    cell[k] ??= { n: 0, acc: 0, subjects: [] };
+    cell[k].n++;
+    if (s.access !== "none") cell[k].acc++;
+  }
+  for (const sub of d.subjects)
+    for (const c of sub.cohorts) {
+      const k = c.major + "|" + c.year;
+      if (cell[k]) cell[k].subjects.push(sub);
+    }
+  let html = "<thead><tr><th>Major</th>" +
+    d.years.map(y => `<th>Year ${y}</th>`).join("") + "<th>Total</th></tr></thead><tbody>";
+  for (const m of d.majors) {
+    let total = 0;
+    html += `<tr><th class="rowkey">${dot(m)}${MAJ(m)}</th>`;
+    for (const y of d.years) {
+      const c = cell[m + "|" + y];
+      if (!c) { html += `<td class="empty">&ndash;</td>`; continue; }
+      total += c.n;
+      c.subjects.sort((a, b) => a.code.localeCompare(b.code));
+      html += `<td><div class="cohort-head"><b>${c.n}</b> students` +
+        (c.acc ? ` <span class="acc-badge" title="need an accessible seat">A ${c.acc}</span>` : "") +
+        `</div><div class="cohort-subs">` +
+        c.subjects.map(s =>
+          `<span class="xchip" title="${s.students} students">` +
+          `<b>${esc(s.code)}</b><small>${esc(sessLabel(s.session))}</small></span>`).join("") +
+        `</div></td>`;
+    }
+    html += `<td class="total">${total}</td></tr>`;
+  }
+  document.getElementById("cohorts").innerHTML = html + "</tbody>";
+}
+
+// ---------- timetable ----------
+function renderTimetable(d) {
+  const dates = [...new Set(d.sessions.map(s => s.date))];
+  const slots = [...new Set(d.sessions.map(s => s.start + "-" + s.end))];
+  const bySlot = {};
+  for (const s of d.sessions) bySlot[s.date + "|" + s.start + "-" + s.end] = s;
+  const exams = {};
+  for (const sub of d.subjects) (exams[sub.session] ??= []).push(sub);
+
+  let html = "<thead><tr><th>Day</th>" + slots.map(t => `<th>${t}</th>`).join("") +
+             "</tr></thead><tbody>";
+  for (const date of dates) {
+    html += `<tr><th class="rowkey">${dayLabel(date)}</th>`;
+    for (const t of slots) {
+      const s = bySlot[date + "|" + t];
+      if (!s) { html += `<td class="empty">&ndash;</td>`; continue; }
+      const list = (exams[s.id] || []).sort((a, b) => b.students - a.students);
+      const n = list.reduce((k, x) => k + x.students, 0);
+      const pct = d.seats ? Math.round(100 * n / d.seats) : 0;
+      html += `<td><div class="sess-head"><b>${s.id}</b>` +
+        `<span>${n} / ${d.seats} seats</span></div>` +
+        `<div class="bar"><i style="width:${Math.min(pct, 100)}%"></i></div>`;
+      if (!list.length) html += `<div class="muted small">no exams</div>`;
+      html += `<ul class="sess-exams">` + list.map(x =>
+        `<li><span class="xcode">${esc(x.code)}</span>` +
+        x.cohorts.map(c =>
+          `<a class="cohort-link" title="Seat ${MAJ(c.major)} year ${c.year} in ${s.id}" ` +
+          `href="/?session=${s.id}&years=${c.year}&majors=${c.major}">` +
+          `${dot(c.major)}${MAJ(c.major)} Y${c.year}</a>`).join(" ") +
+        `<span class="xn">${x.students}</span></li>`).join("") + `</ul>` +
+        (list.length ? `<a class="seat-link" href="/?session=${s.id}">Seat this session &rarr;</a>` : "") +
+        `</td>`;
+    }
+    html += "</tr>";
+  }
+  document.getElementById("timetable").innerHTML = html + "</tbody>";
+}
+
+// ---------- students ----------
+function renderStudents() {
+  const q = document.getElementById("ssearch").value.trim().toLowerCase();
+  const m = document.getElementById("smajor").value;
+  const y = document.getElementById("syear").value;
+  const accOnly = document.getElementById("saccess").checked;
+  const rows = S.data.students.filter(s =>
+    (!m || s.major === m) && (!y || String(s.year) === y) &&
+    (!accOnly || s.access !== "none") &&
+    (!q || s.id.toLowerCase().includes(q) || String(s.name).toLowerCase().includes(q)));
+  const shown = S.showAll ? rows : rows.slice(0, PAGE);
+  document.getElementById("scount").textContent =
+    rows.length === S.data.students.length ? `(${rows.length})`
+                                           : `(${rows.length} of ${S.data.students.length})`;
+  document.getElementById("srows").innerHTML = shown.map(s =>
+    `<tr><td class="mono">${esc(s.id)}</td><td>${esc(s.name)}</td>` +
+    `<td>${dot(s.major)}${MAJ(s.major)}</td><td>${s.year}</td>` +
+    `<td>${s.access === "none" ? '<span class="muted">-</span>'
+          : `<span class="acc-badge">A</span> ${esc(s.access.replace("_", " "))}`}</td>` +
+    `<td class="exams">${s.exams.map(examChip).join("")}</td></tr>`).join("") ||
+    `<tr><td colspan="6" class="muted">No student matches.</td></tr>`;
+  const more = document.getElementById("smore");
+  more.classList.toggle("hidden", rows.length <= PAGE || S.showAll);
+  more.textContent = `Show all ${rows.length}`;
+}
+
+// ---------- rooms ----------
+function renderRooms(d) {
+  document.getElementById("rooms").innerHTML = d.rooms.map(r => {
+    const open = r.available === "yes";
+    let grid = "";
+    for (let row = 1; row <= r.rows; row++)
+      for (let col = 1; col <= r.cols; col++) {
+        const acc = S.accSeats.has(`${r.id}|${row}|${col}`);
+        grid += `<i class="mini-seat${acc ? " acc" : ""}"></i>`;
+      }
+    return `<div class="room-card${open ? "" : " closed"}">
+      <div class="room-head"><b>${esc(r.id)}</b>
+        <span class="pill ${open ? "ok" : "err"}">${open ? "open" : "closed"}</span></div>
+      <div class="muted small">${r.rows} &times; ${r.cols} &middot; ${r.seats} seats &middot; ${r.accessible} accessible</div>
+      <div class="mini-grid" style="grid-template-columns:repeat(${r.cols}, 1fr)">${grid}</div>
+    </div>`;
+  }).join("");
+}
+
+// ---------- tabs ----------
+function showTab(name) {
+  document.querySelectorAll("#tabs .tab").forEach(t =>
+    t.classList.toggle("active", t.dataset.tab === name));
+  document.querySelectorAll("[data-panel]").forEach(p =>
+    p.classList.toggle("hidden", p.dataset.panel !== name));
+  history.replaceState(null, "", "?tab=" + name);
+}
+
+async function load() {
+  try {
+    const r = await fetch("/api/dataset");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    S.data = d;
+    d.subjects.forEach(s => S.subjects[s.code] = s);
+    d.sessions.forEach(s => S.sessions[s.id] = s);
+    d.majors.forEach((m, i) => S.majorHue[m] = Math.round(i * 360 / d.majors.length));
+    S.accSeats = new Set();
+    for (const room of d.rooms)
+      for (const [row, col] of room.accessible_at) S.accSeats.add(`${room.id}|${row}|${col}`);
+
+    const ms = document.getElementById("smajor"), ys = document.getElementById("syear");
+    d.majors.forEach(m => ms.add(new Option(MAJ(m), m)));
+    d.years.forEach(y => ys.add(new Option("Year " + y, y)));
+
+    renderSummary(d); renderCohorts(d); renderTimetable(d); renderStudents(); renderRooms(d);
+    document.getElementById("loading").classList.add("hidden");
+    document.getElementById("page").classList.remove("hidden");
+    const tab = new URLSearchParams(location.search).get("tab");
+    if (tab && document.querySelector(`[data-panel="${tab}"]`)) showTab(tab);
+  } catch (e) {
+    document.getElementById("loading").classList.add("hidden");
+    const f = document.getElementById("failed");
+    f.textContent = "Could not load the data: " + e.message;
+    f.classList.remove("hidden");
+  }
+}
+
+document.querySelectorAll("#tabs .tab").forEach(t => t.onclick = () => showTab(t.dataset.tab));
+["ssearch", "smajor", "syear", "saccess"].forEach(id =>
+  document.getElementById(id).addEventListener(id === "ssearch" ? "input" : "change",
+    () => { S.showAll = false; renderStudents(); }));
+document.getElementById("smore").onclick = () => { S.showAll = true; renderStudents(); };
+load();
+</script>
+</body>
+</html>

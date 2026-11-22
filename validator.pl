@@ -1,5 +1,5 @@
 % ===========================================================================
-% validator.pl  -  independent check of a finished seating plan   (Member A)
+% validator.pl  -  independent check of a finished seating plan
 % ===========================================================================
 % The validator deliberately does NOT reuse the solver's bookkeeping. It
 % re-derives everything from the raw facts, so a bug in allocation.pl or
