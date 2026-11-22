@@ -120,22 +120,6 @@ with their exams, and the rooms.
     repeats steps 5-8 for all 20 sessions, so every subject is seated in its
     own session. It shows a year x major table of exams seated per cohort; a
     cohort is finished when all of its exams are seated.
-
-### Speed
-
-On the main config (`config_big.toml`: 1,925 students, 191 subjects, 20
-sessions, 10 rooms of 9x9) the timetable is built in about 0.2 s, each
-session of 435-480 students is seated and validated in **0.3-0.7 s** (6-10
-rooms, 3-6 allocation retries), and the whole term in about 10 s.
-
-```
-session    students    rooms     retries     validator
-sess1      480         9         5           valid (536 ms)
-sess2      440         6         3           valid (306 ms)
-...
-sess12     475         10        6           valid (678 ms)
-...
-sess20     435         8         5           valid (521 ms)
 ```
 
 ---
@@ -182,33 +166,30 @@ swipl main.pl
 
 ## 3. Files
 
-| File | Owner | What it holds |
-|---|---|---|
-| `config.toml` | A | what to generate: students and subjects per (major, year), rooms, exam period |
-| `generate_data.py` | A | builds the dataset from `config.toml`, runs the timetabler, re-checks clashes and capacity |
-| `timetable.pl` | A | `build_timetable/2` - the exam timetabling CSP (subject -> session) |
-| `data.pl` | A | generated facts, including the timetable as `exam/2` |
-| `data_sample.pl` | A | 20 students, 2 exams, 2 rooms - used by the tests and for demos |
-| `rules.pl` | A | constants (`min_separation/1`, `max_retries/1`) and shared derived rules |
-| `allocation.pl` | A | `students_in_session/3`, `allocate_rooms/3`, `reallocate/4`, UI helpers |
-| `validator.pl` | A | `validate_seating/4` - independent re-check of a finished plan |
-| `solver.pl` | B | `solve_room/4` - the backtracking seat CSP for one room |
-| `main.pl` | B | `generate_seating/3`, the retry loop, `seat_term/2` (whole term), capacity counts, JSON helpers |
-| `bridge.py` | C | pyswip bridge + a small Prolog-term parser |
-| `app.py` | C | Flask admin UI and the export endpoints |
-| `export.py` | C | CSV and PDF generation |
-| `templates/`, `static/` | C | the web front end |
-| `demo.pl` | all | console demonstration |
-| `tests/test_prolog.pl` | all | 80 plunit tests |
-| `tests/scenarios/` | all | tiny edge-case datasets for seating and timetabling |
-| `TESTING.md` | all | every way to test the system, and how to change the dataset size |
-| `tests/test_pipeline.py` | all | 64 Python tests (bridge, UI, data page, exports, config, capacity) |
+| File | What it holds |
+|---|---|
+| `config.toml` | what to generate: students and subjects per (major, year), rooms, exam period |
+| `generate_data.py` | builds the dataset from `config.toml`, runs the timetabler, re-checks clashes and capacity |
+| `timetable.pl` | `build_timetable/2` - the exam timetabling CSP (subject -> session) |
+| `data.pl` | generated facts, including the timetable as `exam/2` |
+| `data_sample.pl` | 20 students, 2 exams, 2 rooms - used by the tests and for demos |
+| `rules.pl` | constants (`min_separation/1`, `max_retries/1`) and shared derived rules |
+| `allocation.pl` | `students_in_session/3`, `allocate_rooms/3`, `reallocate/4`, UI helpers |
+| `validator.pl` | `validate_seating/4` - independent re-check of a finished plan |
+| `solver.pl` | `solve_room/4` - the backtracking seat CSP for one room |
+| `main.pl` | `generate_seating/3`, the retry loop, `seat_term/2` (whole term), capacity counts, JSON helpers |
+| `bridge.py` | pyswip bridge + a small Prolog-term parser |
+| `app.py` | Flask admin UI and the export endpoints |
+| `export.py` | CSV and PDF generation |
+| `templates/`, `static/` | the web front end |
+| `demo.pl` | console demonstration |
+| `tests/test_prolog.pl` | 80 plunit tests |
+| `tests/scenarios/` | tiny edge-case datasets for seating and timetabling |
+| `TESTING.md` | every way to test the system, and how to change the dataset size |
+| `tests/test_pipeline.py` | 64 Python tests (bridge, UI, data page, exports, config, capacity) |
 
 The facts and predicates each part relies on are listed in
-[section 8](#8-interface-reference). If something breaks: wrong students,
-clashes or a bad room split go to A; seat conflicts or solver timeouts go to
-B; UI, parsing or export problems go to C. When the validator reports a
-violation, A confirms the validator is right, then the owner of the source fixes it.
+[section 8](#8-interface-reference).
 
 ---
 
