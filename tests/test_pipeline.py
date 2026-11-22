@@ -25,12 +25,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import export                                            # noqa: E402
 import generate_data                                     # noqa: E402
+import workbook                                          # noqa: E402
 from bridge import (Assignment, Compound, PrologError, SeatingEngine,  # noqa
                     filters_term, parse_result, parse_term)
 
 ENGINE: SeatingEngine | None = None
-CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                      "config.toml")
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BIG = os.path.join(ROOT_DIR, "datasets", "big.xlsx")        # what data.pl is made from
+SMALL = os.path.join(ROOT_DIR, "datasets", "small.xlsx")
 
 
 def setUpModule():
@@ -123,14 +125,11 @@ class TestResultParser(unittest.TestCase):
 
 class TestCatalogue(unittest.TestCase):
 
-    def test_summary_matches_the_config(self):
-        cohorts = generate_data.cohorts_from(
-            generate_data.load_config(CONFIG))
+    def test_summary_matches_the_workbook(self):
+        ds, _ = workbook.read_workbook(BIG)
         summary = ENGINE.catalogue()["summary"]
-        self.assertEqual(summary["students"],
-                         sum(c.students for c in cohorts))
-        self.assertEqual(summary["subjects"],
-                         sum(c.subjects for c in cohorts if c.students))
+        self.assertEqual(summary["students"], len(ds.students))
+        self.assertEqual(summary["subjects"], len(ds.subjects))
         self.assertGreaterEqual(summary["rooms_available"], 10)
 
     def test_sessions_report_their_headcount(self):
@@ -413,7 +412,7 @@ class TestConfigImport(unittest.TestCase):
         cls.tmp.cleanup()
 
     def tearDown(self):
-        ENGINE.load_dataset(os.path.join(os.path.dirname(CONFIG), "data.pl"),
+        ENGINE.load_dataset(os.path.join(ROOT_DIR, "data.pl"),
                             label="data.pl")
         self.webapp._CACHE.clear()
         self.webapp._LAYOUTS.clear()
@@ -429,40 +428,72 @@ class TestConfigImport(unittest.TestCase):
 
     def upload(self, name, data: bytes):
         return self.client.post("/api/import",
-                                data={"config": (io.BytesIO(data), name)},
+                                data={"workbook": (io.BytesIO(data), name)},
                                 content_type="multipart/form-data")
 
-    def small_config(self) -> bytes:
-        with open(os.path.join(os.path.dirname(CONFIG), "config_small.toml"), "rb") as fh:
-            return fh.read()
+    def small_workbook(self, change=None) -> bytes:
+        """datasets/small.xlsx, optionally edited by change(openpyxl workbook)."""
+        with open(SMALL, "rb") as fh:
+            data = fh.read()
+        if change is None:
+            return data
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(data))
+        change(wb)
+        out = io.BytesIO()
+        wb.save(out)
+        return out.getvalue()
 
     def test_import_page_has_the_upload_box(self):
         res = self.client.get("/import")
         self.assertEqual(res.status_code, 200)
         self.assertIn(b'type="file"', res.data)
 
-    def test_uploading_a_config_loads_it(self):
-        res = self.upload("config_small.toml", self.small_config())
+    def test_example_workbooks_can_be_downloaded(self):
+        res = self.client.get("/import/example/small.xlsx")
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data.startswith(b"PK"))          # a zip, i.e. .xlsx
+        res.close()
+        self.assertEqual(self.client.get("/import/example/other.xlsx").status_code, 404)
+
+    def test_uploading_a_workbook_loads_it(self):
+        res = self.upload("small.xlsx", self.small_workbook())
         data = res.get_json()
         self.assertTrue(data["ok"], data)
         self.assertEqual(data["summary"]["students"], 120)
-        self.assertEqual(ENGINE.dataset, "config_small.toml")
-        self.assertTrue(os.path.exists(os.path.join(self.tmp.name,
-                                                    "data_config_small.pl")))
+        self.assertEqual(data["summary"]["sessions"], 6)
+        self.assertEqual(ENGINE.dataset, "small.xlsx")
+        self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "data_small.pl")))
         plan = self.client.post("/api/generate", json={"session": "sess1"}).get_json()
         self.assertTrue(plan["ok"])
         self.assertEqual(plan["validation"]["status"], "valid")
 
-    def test_a_config_that_cannot_be_timetabled_is_refused_readably(self):
-        text = self.small_config().replace(b"days = 3", b"days = 1")
-        res = self.upload("tight.toml", text)
+    def test_a_workbook_that_cannot_be_timetabled_is_refused_readably(self):
+        def one_day(wb):
+            wb["Exam period"]["B3"] = 1
+        res = self.upload("tight.xlsx", self.small_workbook(one_day))
         self.assertEqual(res.status_code, 400)
         self.assertIn("at least 3 sessions", res.get_json()["message"])
         self.assertEqual(ENGINE.dataset, "data.pl")      # old data kept
 
+    def test_mistakes_in_the_sheets_are_named_with_their_row(self):
+        def break_it(wb):
+            wb["Students"]["D2"] = "two"                 # year
+            wb["Students"]["E3"] = "crutches"            # access
+            wb["Subjects"].append(["ee105", "EE", 1])    # no EE year-1 students
+            wb["Rooms"]["E2"] = "maybe"
+        res = self.upload("broken.xlsx", self.small_workbook(break_it))
+        self.assertEqual(res.status_code, 400)
+        msg = res.get_json()["message"]
+        self.assertIn("Students row 2: Year must be a whole number", msg)
+        self.assertIn("Students row 3: Access must be none, wheelchair", msg)
+        self.assertIn("ee105 is for EE year 1, but no student", msg)
+        self.assertIn("Rooms row 2: Available must be yes or no", msg)
+        self.assertEqual(ENGINE.dataset, "data.pl")
+
     def test_bad_input_is_refused(self):
-        self.assertEqual(self.upload("bad.toml", b"x = [1").status_code, 400)
-        self.assertEqual(self.upload("notes.txt", b"hello").status_code, 400)
+        self.assertEqual(self.upload("bad.xlsx", b"not a zip").status_code, 400)
+        self.assertEqual(self.upload("old.toml", b"x = 1").status_code, 400)
         self.assertEqual(self.client.post("/api/import").status_code, 400)
 
 
@@ -473,7 +504,7 @@ class TestConstraintsApi(unittest.TestCase):
     default constraints are put back after every test.
     """
 
-    ROOT = os.path.dirname(CONFIG)
+    ROOT = ROOT_DIR
 
     @classmethod
     def setUpClass(cls):
@@ -572,7 +603,7 @@ class TestConstraintsApi(unittest.TestCase):
 class TestPlannerApi(unittest.TestCase):
     """The Planner page: try days x slots x room pool, score, apply."""
 
-    ROOT = os.path.dirname(CONFIG)
+    ROOT = ROOT_DIR
     ONE_SLOT = [["09:00", "12:00"]]
 
     @classmethod
@@ -691,7 +722,62 @@ class TestCapacityAndTerm(unittest.TestCase):
             self.assertEqual(c["seated"], c["total"], c)
 
 
-class TestConfig(unittest.TestCase):
+class TestWorkbook(unittest.TestCase):
+    """The .xlsx format: what the admin types in, and the round trip."""
+
+    def test_big_workbook_gives_the_same_dataset_as_its_recipe(self):
+        ds, fill = workbook.read_workbook(BIG)
+        recipe = generate_data.build_full(
+            generate_data.load_config(os.path.join(ROOT_DIR, "datasets", "big.toml")))
+        self.assertEqual(fill, 80)
+        for part in ("students", "names", "subjects", "enrolments",
+                     "sessions", "rooms", "seats"):
+            self.assertEqual(getattr(ds, part), getattr(recipe, part), part)
+
+    def test_written_workbook_reads_back_the_same(self):
+        import tempfile
+        ds = generate_data.build_sample()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "sample.xlsx")
+            workbook.write_workbook(ds, path, "sample", fill=70, acc_cols=[1, 3])
+            back, fill = workbook.read_workbook(path)
+        self.assertEqual(fill, 70)
+        self.assertEqual(back.students, ds.students)
+        self.assertEqual(back.rooms, ds.rooms)
+        self.assertEqual(back.seats, ds.seats)
+        self.assertEqual(back.sessions, ds.sessions)
+
+    def test_real_style_ids_and_uppercase_majors_are_accepted(self):
+        from openpyxl import load_workbook
+        wb = load_workbook(SMALL)
+        wb["Students"]["A2"] = 67011653                  # typed as a number
+        wb["Subjects"]["A2"] = "SE-101"
+        out = io.BytesIO()
+        wb.save(out)
+        ds, _ = workbook.read_workbook(out.getvalue())
+        self.assertEqual(ds.students[0][:3], ("67011653", "se", 1))
+        self.assertIn(("67011653", "se-101"), ds.enrolments)
+
+    def test_mornings_only_when_the_afternoon_is_left_empty(self):
+        from openpyxl import load_workbook
+        wb = load_workbook(SMALL)
+        wb["Exam period"]["B6"] = None
+        wb["Exam period"]["B7"] = None
+        out = io.BytesIO()
+        wb.save(out)
+        ds, _ = workbook.read_workbook(out.getvalue())
+        self.assertEqual({(s[2], s[3]) for s in ds.sessions}, {("09:30", "12:30")})
+        self.assertEqual(len(ds.sessions), 3)
+
+    def test_summary_sheet_uses_formulas(self):
+        from openpyxl import load_workbook
+        ws = load_workbook(SMALL)["Summary"]
+        self.assertEqual(ws["A5"].value, "SE")
+        self.assertTrue(str(ws["C5"].value).startswith("=COUNTIFS(Students!"))
+
+
+class TestRecipe(unittest.TestCase):
+    """The random-roster recipe (datasets/*.toml) behind the demo workbooks."""
 
     def test_per_year_accepts_a_number_or_a_list(self):
         self.assertEqual(generate_data.per_year(5, [1, 2], "subjects", "se"),

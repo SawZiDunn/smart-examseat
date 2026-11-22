@@ -8,3 +8,4 @@
 pyswip>=0.3.0
 Flask>=3.0
 reportlab>=4.0
+openpyxl>=3.1

@@ -325,16 +325,16 @@ same_day_pairs(Infos, Assign, _Slots, N) :-
 
 %! explain_timetable_failure(+Reason, -Text) is det.
 explain_timetable_failure(no_sessions, Text) :- !,
-    Text = 'The exam period has no sessions (check [exam_period] in config.toml).'.
+    Text = 'The exam period has no sessions (check the Exam period sheet).'.
 explain_timetable_failure(subject_too_large(C, Size, Max), Text) :- !,
     format(atom(Text),
            'Subject ~w has ~d students but one session can hold at most ~d \c
-            of one exam. Add rooms or raise max_fill_percent.',
+            of one exam. Add rooms or raise the session fill %.',
            [C, Size, Max]).
 explain_timetable_failure(too_few_sessions(Need, Have), Text) :- !,
     format(atom(Text),
            'The exams need at least ~d sessions but the exam period has ~d. \c
-            Add exam days or rooms in config.toml, or relax a constraint.',
+            Add exam days or rooms, or relax a constraint.',
            [Need, Have]).
 explain_timetable_failure(too_few_days(Need, Have), Text) :- !,
     format(atom(Text),
@@ -346,7 +346,7 @@ explain_timetable_failure(fixed_blocked(C, S), Text) :- !,
 explain_timetable_failure(no_timetable(N), Text) :- !,
     format(atom(Text),
            'No timetable fits the ~d sessions within the search budget. \c
-            Add exam days or rooms in config.toml.', [N]).
+            Add exam days or rooms.', [N]).
 explain_timetable_failure(Reason, Text) :-
     format(atom(Text), '~q', [Reason]).
 

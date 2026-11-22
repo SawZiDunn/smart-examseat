@@ -15,8 +15,8 @@ Satisfaction Problem in Prolog** with a Python/Flask admin interface.
 
 ```mermaid
 flowchart TD
-    cfg["<b>config.toml</b><br/>majors, years, students and subjects<br/>per cohort, rooms, exam period"]
-    gen["<b>generate_data.py</b><br/>students, subjects, enrolments,<br/>rooms and seats"]
+    cfg["<b>dataset workbook (.xlsx)</b><br/>students, subjects per (major, year),<br/>rooms, exam period"]
+    gen["<b>workbook.py + generate_data.py</b><br/>checks the sheets; enrolments,<br/>sessions and seats"]
     tt["<b>timetable.pl</b> - CSP #1<br/>which session each subject is in"]
     data[("<b>data.pl</b><br/>facts + exam/2 timetable")]
     cfg --> gen --> tt --> data
@@ -35,7 +35,7 @@ flowchart TD
 ```
 
 ```
-config.toml → Data + Timetable → Allocation → Seat Solver → Validator → UI → CSV/PDF
+workbook.xlsx → Data + Timetable → Allocation → Seat Solver → Validator → UI → CSV/PDF
                 (CSP #1)                        (CSP #2)      
 ```
 
@@ -43,16 +43,21 @@ config.toml → Data + Timetable → Allocation → Seat Solver → Validator �
 
 **Once per term (before the exams)**
 
-1. **Describe the term.** In `config.toml` the administrator sets the majors,
-   the year levels, how many students and subjects each (major, year) cohort
-   has, the rooms, and the exam period (days x time slots = sessions).
-2. **Generate the data.** In the UI this happens when you import a config on
-   the Import page. From the console, `make data` runs `generate_data.py`, which reads
-   `config.toml` and writes 2 files: `data.pl` (the full dataset, including
-   the exam timetable built by `timetable.pl`) and `data_sample.pl` (a fixed
-   20-student test set, not affected by `config.toml`). The data holds the
-   students of every cohort, each cohort's own subjects (`se101`, `se102`,
-   ... `ce203`), the enrolments, the rooms and their seats.
+1. **Describe the term.** The administrator fills in an Excel workbook
+   (format in section 7): the **Students** (ID, name, major, year,
+   accessibility), the **Subjects** of every (major, year), the **Rooms**, the
+   **Exam period** (first day, number of days, the morning and afternoon
+   slot) and a few **Settings**. A **Summary** sheet counts students,
+   subjects and accessible students per (major, year) with Excel formulas,
+   so the term can be read at a glance. Every student sits every subject of
+   their own major and year.
+2. **Load the data.** In the UI this happens when you upload the workbook on
+   the Import page. From the console, `make data` runs `generate_data.py`,
+   which reads `datasets/big.xlsx` and writes 2 files: `data.pl` (the full
+   dataset, including the exam timetable built by `timetable.pl`) and
+   `data_sample.pl` (a fixed 20-student test set). The workbook is checked
+   first; a mistake is reported with its sheet and row ("Students row 37:
+   Year must be a whole number").
 3. **Build the timetable (CSP #1).** `timetable.pl` is a Prolog program that
    decides which session each subject is examined in. `generate_data.py`
    calls it, and its output is included in `data.pl`. By the time `data.pl`
@@ -73,9 +78,9 @@ config.toml → Data + Timetable → Allocation → Seat Solver → Validator �
    year-1 SE students sit it then, together. Each subject gets exactly one
    session. You don't pick sessions by hand: the timetabler picks them
    automatically. The timetable stays the same until you run `make data`
-   again. Re-running with the same `config.toml` gives the same timetable,
-   because the seed is fixed. If you change the config (more days, different
-   student counts and so on), the sessions can change.
+   again. Re-running with the same workbook gives the same timetable. If you
+   change the workbook (more days, more students and so on), the sessions
+   can change.
 
 **Look at the data before seating.** The **data page** (the `data.pl`
 button at the top right of the UI, or `/data`) shows what is in the data
@@ -155,12 +160,13 @@ pip install -r requirements.txt
 python3 app.py                       # http://127.0.0.1:5000
 ```
 
-The app starts empty and opens the **Import** page: upload a config, e.g.
-`config_big.toml` (the main demo set) or `config_small.toml` (a small one).
-The app then does what `make data` does (generate the students, build the
-timetable, check it) in a second or so and loads the result. The generated
-file goes to `out/`; `config.toml` and `data.pl` are not touched. Use
-*Change config* at the top right to switch.
+The app starts empty and opens the **Import** page: upload a dataset
+workbook, e.g. `datasets/big.xlsx` (the main demo set) or
+`datasets/small.xlsx` (a small one); the page also offers both as downloads
+to use as a template. The app then does what `make data` does (check the
+sheets, build the timetable) in a second or so and loads the result. The
+generated file goes to `out/`; the workbooks and `data.pl` are not touched.
+Use *Change dataset* at the top right to switch.
 
 `make data` (or `python3 generate_data.py --stats`) is still how `data.pl` is
 built for the console tools and the tests: run it in the project root, with
@@ -197,8 +203,10 @@ swipl main.pl
 
 | File | What it holds |
 |---|---|
-| `config.toml` | what to generate: students and subjects per (major, year), rooms, exam period |
-| `generate_data.py` | builds the dataset from `config.toml`, runs the timetabler, re-checks clashes and capacity |
+| `datasets/big.xlsx`, `small.xlsx` | the demo dataset workbooks: students, subjects, rooms, exam period, settings (section 7) |
+| `datasets/big.toml`, `small.toml` | recipes for a random roster; `make workbooks` turns them into the workbooks above |
+| `workbook.py` | reads and checks a workbook (errors name sheet and row), writes one from a recipe |
+| `generate_data.py` | workbook -> `data.pl`: runs the timetabler, re-checks clashes and capacity; also builds `data_sample.pl` |
 | `timetable.pl` | `build_timetable/2` - the exam timetabling CSP (subject -> session) |
 | `data.pl` | generated facts, including the timetable as `exam/2` |
 | `data_sample.pl` | 20 students, 2 exams, 2 rooms - used by the tests and for demos |
@@ -219,7 +227,7 @@ swipl main.pl
 | `tests/test_prolog.pl` | 101 plunit tests |
 | `tests/scenarios/` | tiny edge-case datasets for seating and timetabling |
 | `TESTING.md` | every way to test the system, and how to change the dataset size |
-| `tests/test_pipeline.py` | 81 Python tests (bridge, UI, data page, config import, constraints, planner, exports, capacity) |
+| `tests/test_pipeline.py` | 88 Python tests (bridge, UI, data page, workbook import, constraints, planner, exports, capacity) |
 
 The facts and predicates each part relies on are listed in
 [section 8](#8-interface-reference).
@@ -321,8 +329,8 @@ means the search may have been inconclusive; it is not reported as a proven
 | | |
 |---|---|
 | **Variables** | every subject |
-| **Domains** | the sessions of the exam period (`[exam_period]` in `config.toml`) |
-| **Hard constraints** | two subjects that share a student go in different sessions (this is what guarantees the `exam_clash` rule); a session's headcount <= open seats x `max_fill_percent`; a session's accessible headcount <= accessible seats |
+| **Domains** | the sessions of the exam period (the **Exam period** sheet) |
+| **Hard constraints** | two subjects that share a student go in different sessions (this is what guarantees the `exam_clash` rule); a session's headcount <= open seats x the session fill % (Settings sheet); a session's accessible headcount <= accessible seats |
 | **Soft constraints** | a student should not have two exams on the same day; the load should be spread evenly |
 
 The decision is made by two predicates:
@@ -495,10 +503,10 @@ the dataset size) see [`TESTING.md`](TESTING.md).
   "which constraint is to blame" analysis), and the planner (weekdays, an
   option is scored and the setup restored, a too-small pool is refused,
   unused rooms are not counted, applying an option).
-* `tests/test_pipeline.py` - 81 tests: the Prolog-term parser, the bridge
+* `tests/test_pipeline.py` - 88 tests: the Prolog-term parser, the bridge
   (both the raw `ok(...)`/`failed(...)` route and the JSON route), every
   session solving and validating, CSV/PDF output, every HTTP endpoint, the
-  capacity check, the whole-term endpoint, config parsing and import, and
+  capacity check, the whole-term endpoint, workbook reading, checking and import, and
   the constraints API (add, change, remove, custom rules, run, blame), and
   the planner API (setup, scored option, infeasible option, bad input, apply).
 
@@ -506,22 +514,43 @@ the dataset size) see [`TESTING.md`](TESTING.md).
 
 ## 7. Dataset shape
 
-Everything below comes from `config.toml`, which holds a copy of
-`config_big.toml` (the main demo set). `config_small.toml` is a smaller
-set (120 students, 2 years, 3 majors) to copy in for a quick demo.
+### The workbook
 
-| | `config_big.toml` |
-|---|---|
-| majors | 10: SE, CE, CS, EE, EME, ME, RAI, ENE, IE, BME (lowercase codes in the data, uppercase on screen) |
-| year levels | 1-4 |
-| students | 1,925 - set per (major, year), default 50, at most 50 |
-| subjects | 191 - set per (major, year), default 5; each cohort has its **own** subjects (`se101`, `se102`, ... `ce203`) |
-| enrolments | 9,180 - every student sits all of their cohort's subjects |
-| sessions | 20: 10 weekdays (two weeks) x 2 slots from 2026-12-01 |
-| rooms | 10 rooms of 9x9, all open (r101-r110) |
-| seats | 810, of which 40 accessible |
-| accessibility | ~3% of students; accessible seats at row 1, columns 1, 3, 5, 7 |
-| peak session | 480 students, 59% occupancy (the timetabler caps it at 80%) |
+One `.xlsx` workbook describes the term. Column order does not matter (the
+headers are matched), blank rows are skipped, and majors may be typed `SE` or
+`se`.
+
+| Sheet | Columns / rows | Notes |
+|---|---|---|
+| **Summary** | Major, Year, Students, Subjects, Accessible, Exam seats; rooms, seats, days, sessions | Excel formulas over the other sheets. Read only: the app ignores it |
+| **Students** | Student ID, Name, Major, Year, Access | Access is `none`, `wheelchair` or `other_accessible` (a drop-down; empty = `none`). IDs such as `67011653` work |
+| **Subjects** | Code, Major, Year | every student of that major and year sits it; a subject for a (major, year) with no students is refused |
+| **Rooms** | Room ID, Rows, Columns, Seats, Available | Seats is a formula; Available is `yes` or `no` |
+| **Exam period** | First exam day, Exam days, Morning starts/ends, Afternoon starts/ends | weekends are skipped; leave the afternoon empty for mornings only |
+| **Settings** | Session fill %, Accessible front-row columns | e.g. `80` and `1, 3, 5, 7` |
+
+IDs and codes are stored in lowercase (`SE-101` becomes `se-101`).
+
+`datasets/big.xlsx` and `datasets/small.xlsx` were made by `make workbooks`
+from the random-roster recipes `datasets/big.toml` and `small.toml`. Edit a
+workbook directly for real data; remake it only to get a new random roster.
+
+### The demo datasets
+
+| | `datasets/big.xlsx` (main) | `datasets/small.xlsx` |
+|---|---|---|
+| majors | 10: SE, CE, CS, EE, EME, ME, RAI, ENE, IE, BME | SE, CS (years 1-2), EE (year 2) |
+| year levels | 1-4 | 1-2 |
+| students | 1,925 (at most 50 per major and year) | 120 |
+| subjects | 191; each cohort has its **own** subjects (`se101`, `se102`, ... `ce203`) | 12 |
+| enrolments | 9,180 - every student sits all of their cohort's subjects | 300 |
+| sessions | 20: 10 weekdays x 2 slots (09:30-12:30, 13:30-16:30) from 2026-12-01 | 6: 3 days x 2 slots |
+| rooms | 10 rooms of 9x9, all open (r101-r110) | 2 rooms of 8x8 |
+| seats | 810, of which 40 accessible | 128, of which 8 accessible |
+| accessibility | ~3% of students; accessible seats at row 1, columns 1, 3, 5, 7 | the same |
+| peak session | 480 students, 59% occupancy (the timetabler caps it at 80%) | |
+
+`data.pl` is built from `datasets/big.xlsx`; the tests expect it.
 
 **The clash-free invariant.** The timetabling CSP never puts two subjects
 that share a student into the same session. `generate_data.py` re-checks
@@ -638,7 +667,7 @@ faster.
   The timetabler keeps each session within capacity, and the UI refuses a
   selection larger than the open rooms; if rooms are closed after the
   timetable is built, regenerate the data (`make data`).
-* Subjects belong to exactly one cohort, as configured. The timetabler
+* Subjects belong to exactly one cohort, as listed in the workbook. The timetabler
   itself handles shared subjects (it works from who is enrolled in what),
   but the generator does not create electives.
 * One SWI-Prolog engine per process, so `app.py` runs single-threaded and

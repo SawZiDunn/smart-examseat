@@ -9,8 +9,8 @@ source .venv/bin/activate
 
 ## 1. How the system works, in the order things happen
 
-1. **You describe the term** in `config.toml`: majors, year levels, how many students and subjects each (major, year) cohort has, the rooms, and the exam period (days × time slots = sessions).
-2. **`make data`** generates the students and each cohort's own subjects. The **timetabling CSP** (`timetable.pl`) then puts every subject in a session. It guarantees that nobody has two exams at once and that no session holds more than 80% of the open seats, and it avoids giving a student two exams on one day.
+1. **You describe the term** in an Excel workbook (`datasets/big.xlsx` or `small.xlsx`): the students, the subjects of every (major, year), the rooms, the exam period (days × morning/afternoon slot = sessions) and a few settings. The **Summary** sheet counts it all per (major, year).
+2. **`make data`** (or uploading the workbook in the UI) checks the sheets and enrols every student in their cohort's subjects. The **timetabling CSP** (`timetable.pl`) then puts every subject in a session. It guarantees that nobody has two exams at once and that no session holds more than 80% of the open seats, and it avoids giving a student two exams on one day.
 3. **One session at a time**, the seating CSP gives everyone with an exam in that session a seat. Different subjects share rooms; students sitting the same subject never sit side by side in a row. You can narrow a run by year and major. The **counter** (*selected / seats*) will not let a selection exceed the open rooms.
 4. **The whole term:** *Seat every session* in the UI (or `make term`) runs every session and shows a year × major table of exams seated per cohort. A cohort is finished when all of its exams are seated.
 
@@ -28,9 +28,9 @@ Filters are `filters(Years, Majors)`. An empty list means "everyone":
 ## 2. Automated tests
 
 ```bash
-make test            # everything (101 Prolog + 81 Python, about a minute and a half)
+make test            # everything (101 Prolog + 88 Python, about a minute and a half)
 make test-prolog     # plunit only:  swipl -q -g run_tests -t halt tests/test_prolog.pl
-make test-python     # bridge, web app, export and config tests
+make test-python     # bridge, web app, export and workbook tests
 ```
 
 | Suite | File | What it proves |
@@ -47,7 +47,7 @@ make test-python     # bridge, web app, export and config tests
 | `constraints` | 〃 | the default set; malformed constraints are refused; separation(2), no separation, column_gap and room_closed change the plan as they should; the validator checks added hard constraints; a custom Prolog rule prunes the search; unsafe rules are refused; soft penalty = weight x violations; the blame analysis names the culprit |
 | `timetable_constraints` | 〃 | no_exam_on, fixed_session and a custom timetable rule are obeyed; too few days is proven without search |
 | `planner` | 〃 | weekdays skip weekends; an option is scored (days x cost + rooms x cost + penalty) and the loaded setup restored; a too-small pool is refused; unused rooms are not counted; applying an option replaces the setup |
-| Python | `tests/test_pipeline.py` | term parser, bridge results agree with Prolog, CSV/PDF exports, every web endpoint, over-capacity refusal, whole-term endpoint, config parsing |
+| Python | `tests/test_pipeline.py` | term parser, bridge results agree with Prolog, CSV/PDF exports, every web endpoint, over-capacity refusal, whole-term endpoint, workbook reading and import |
 
 ## 3. Console testing (no browser)
 
@@ -103,11 +103,13 @@ python3 app.py --dataset tests/scenarios/not_enough_seats.pl   # any data file
 ```
 
 **Import**
-- [ ] `make run`, open the page: it goes straight to *Import*, which shows only the upload box
-- [ ] Upload `config_small.toml`: about a second later the data page opens with 120 students and 6 sessions
-- [ ] *Change config* (top right), upload `config_big.toml`: 1,925 students, 20 sessions
-- [ ] Upload a config with `days = 1`: a readable refusal ("needs at least 3 sessions"), and the previous data stays loaded
-- [ ] `config.toml` and `data.pl` are unchanged afterwards (`git status`)
+- [ ] `make run`, open the page: it goes straight to *Import*, with the upload box and download links for `small.xlsx` and `big.xlsx`
+- [ ] Upload `datasets/small.xlsx`: about a second later the data page opens with 120 students and 6 sessions
+- [ ] *Change dataset* (top right), upload `datasets/big.xlsx`: 1,925 students, 20 sessions
+- [ ] Open a copy of `small.xlsx`, set *Exam days* to 1 on the **Exam period** sheet, upload it: a readable refusal ("needs at least 3 sessions"), and the previous data stays loaded
+- [ ] In a copy, type `two` as a Year on **Students** and `maybe` as Available on **Rooms**: the refusal lists both, with sheet and row
+- [ ] Upload a `.toml` or `.csv`: refused, asking for an `.xlsx`
+- [ ] The workbooks and `data.pl` are unchanged afterwards (`git status`)
 
 Open `http://127.0.0.1:5000/?view=term` to go straight to the whole-term view, or `/data` for the data page.
 
@@ -140,13 +142,13 @@ Open `http://127.0.0.1:5000/?view=term` to go straight to the whole-term view, o
 - [ ] Change a constraint from hard to soft and back; remove one; *Reset to defaults*
 - [ ] Type `separation(x)` or `foo(1)`: a readable refusal, nothing added
 - [ ] Click the example "no same major side by side", add it as soft weight 2, *Run*: feasible, with a penalty and example pairs
-- [ ] Add `room_fill(30)` (small config), *Run*: not feasible; *Which constraint is to blame?* names `room_fill(30)`
+- [ ] Add `room_fill(30)` (small.xlsx), *Run*: not feasible; *Which constraint is to blame?* names `room_fill(30)`
 - [ ] Add the example "year 1 students not in the front row" as hard: not feasible, and the blame table names both `accessible_seats` and the rule
 - [ ] Write `violation(X) :- shell(ls), X = 1.` as a rule: refused ("shell/1 is not allowed")
 
 **Planner** (top right, *Planner*)
 - [ ] The form starts from the loaded data: first exam day, a range of days around the current one, the current slots, and the current rooms as the pool
-- [ ] On `config_small.toml`: days 1-5, tick 1 and 2 slots a day, *Find the best*: 1 day and 2 days x 1 slot are refused with the reason (too few sessions); the best is 3 days (score 400)
+- [ ] On `small.xlsx`: days 1-5, tick 1 and 2 slots a day, *Find the best*: 1 day and 2 days x 1 slot are refused with the reason (too few sessions); the best is 3 days (score 400)
 - [ ] *+ Add a room size* adds a row; the option count and pool size update
 - [ ] Raise *Cost per room needed* and run again: options with fewer rooms win more often
 - [ ] *Use this option*: the Data page timetable now has the chosen days and slots, and the seating page uses the pool
@@ -189,77 +191,79 @@ All of these are also checked automatically by the `scenarios` and `timetable` b
 
 **Writing your own:** copy one of these files and edit the facts. The schema is in [README.md section 8.2](README.md#82-facts-datapl-generated). Every student needs a `student/4`, a `student_name/2` and at least one `enrolled/2`. Every room needs a `room/4` and one `seat/4` per seat. To test seating, include `exam/2` facts, and make sure no student has two exams in the same session.
 
-## 6. Changing the dataset: `config.toml`
+## 6. Changing the dataset: the workbook
 
-Edit [`config.toml`](config.toml), then run:
+Edit the workbook in Excel, LibreOffice or Google Sheets (download it as
+`.xlsx`), then upload it on the Import page. For the console tools and the
+tests, `make data` reads `datasets/big.xlsx`:
 ```bash
-make data            # = python3 generate_data.py --stats
+make data                                            # datasets/big.xlsx -> data.pl
+python3 generate_data.py --workbook my_term.xlsx     # any other workbook
 ```
 
-| Setting | Default | Effect |
-|---|---|---|
-| `years` | `[1, 2, 3, 4]` | year levels |
-| `[defaults] students` | `50` | students per (major, year) when a major does not say |
-| `[defaults] subjects` | `5` | subjects per (major, year) when a major does not say |
-| `[defaults] access_rate` | `0.03` | share of students who need an accessible seat |
-| `[majors.<code>]` | 10 majors | one table per major. `students = 40` means 40 in every year; `students = [60, 55, 50, 45]` sets each year. The same goes for `subjects`. An empty table uses the defaults |
-| `[exam_period]` | 10 days × 2 slots | `start_date`, `days` (weekdays; weekends are skipped), `slots` → the sessions |
-| `[timetable] max_fill_percent` | `80` | the most of the open seats one session may use |
-| `[[rooms.groups]]` | 10 rooms of 9x9 | `count`, `rows`, `cols`, `available` |
-| `seed` | fixed | change it for a different random roster |
+| Sheet | What to change |
+|---|---|
+| **Students** | add, remove or edit rows: Student ID, Name, Major, Year, Access (`none` / `wheelchair` / `other_accessible`) |
+| **Subjects** | one row per subject: Code, Major, Year. Every student of that major and year sits it |
+| **Rooms** | Room ID, Rows, Columns, Available (`yes` / `no`) |
+| **Exam period** | First exam day, Exam days (weekdays; weekends are skipped), the morning and afternoon times. Leave the afternoon empty for mornings only |
+| **Settings** | Session fill % (default 80: the most of the open seats one session may use), Accessible front-row columns (`1, 3, 5, 7`) |
+| **Summary** | nothing: it is worked out by formulas (if you add a new major or year, add a row for it to see its counts) |
 
-Example: year-1 SE has 5 subjects, year-2 SE has 3, and Civil year 1 has 4:
-```toml
-[majors.se]
-subjects = [5, 3, 4, 4]
-
-[majors.ce]
-subjects = [4, 5, 5, 4]
+A mistake is reported with its sheet and row, up to 15 at a time:
+```
+The workbook has problems:
+- Students row 2: Year must be a whole number (1-8), got 'two'.
+- Subjects row 14: ee105 is for EE year 1, but no student is in that major and year.
 ```
 
-If the exams can't fit, `make data` stops with a reason and leaves `data.pl` unchanged:
+If the exams can't fit, the import (or `make data`) stops with a reason and
+keeps the previous data:
 ```
 timetabling failed: The exams need at least 15 sessions but the exam period has 14.
-Add exam days or rooms in config.toml, or relax a constraint.
+Add exam days or rooms, or relax a constraint.
 ```
 
-Tested with the default students and rooms:
+Tested with `big.xlsx` and its rooms, changing *Exam days*:
 
-| `days` | Sessions | Result |
+| Exam days | Sessions | Result |
 |---|---|---|
 | 12 | 24 | timetable built; busiest session at 48% of seats; every session seats and validates |
 | 10 (default) | 20 | timetable built; busiest session at 59% of seats; every session seats and validates |
 | 8 | 16 | timetable built (72% of seats), but about half the sessions fail to seat with `search_limit`: rooms are too full for the separation rule |
 | 7 | 14 | refused: at least 15 sessions are needed |
 
-### The small demo dataset: `config_small.toml`
+### The small demo dataset: `datasets/small.xlsx`
 
-A second config that is easy to picture, for demos. In the UI, upload it on
-the Import page (or *Change config*). For the console tools, copy it over
-`config.toml`:
+Easy to picture, for demos. Upload it on the Import page (or *Change dataset*):
 
 |        | SE | CS | EE |
 |---|---|---|---|
 | year 1 | 30 students, 3 subjects | 30 students, 3 subjects | - |
 | year 2 | 20 students, 2 subjects | 20 students, 2 subjects | 20 students, 2 subjects |
 
-120 students, 12 subjects, 3 exam days x 2 slots = 6 sessions, 2 open rooms
-of 8x8 (128 seats) and 1 closed room.
+120 students, 12 subjects, 3 exam days x 2 slots = 6 sessions, 2 rooms of
+8x8 (128 seats). For the console tools:
 
 ```bash
-cp config_small.toml config.toml
-make data && make demo
-
-# afterwards: back to the main set
-cp config_big.toml config.toml && make data
+python3 generate_data.py --workbook datasets/small.xlsx && make demo
+make data                      # afterwards: back to the main set
 ```
 
-While the small set is in `data.pl`, some Python tests fail, because they
-expect the full dataset. Switch back before running `make test`.
+While the small set is in `data.pl`, some tests fail, because they expect the
+main dataset. Run `make data` before `make test`.
 
 The timetable it produces puts each year-1 student's 3 exams on 3 different
 days and seats every session in 1-2 rooms with no retries.
 
+### New random workbooks
+
+`datasets/big.toml` and `small.toml` are recipes: counts per (major, year),
+rooms, exam period and a random seed. `make workbooks` turns them into
+`big.xlsx` and `small.xlsx` with random names (the same ones every time, as
+the seed is fixed). Use this only for test data; real data goes straight
+into a workbook.
+
 ### The test sample
 
-The 20-student `data_sample.pl` is fixed, defined in `build_sample()` in `generate_data.py`. The tests read their expected student and subject counts from `config.toml`, so changing the config does not break them, as long as the exams still fit.
+The 20-student `data_sample.pl` is fixed, defined in `build_sample()` in `generate_data.py`. The tests read their expected student and subject counts from `datasets/big.xlsx`, so changing the workbook does not break them, as long as the exams still fit.

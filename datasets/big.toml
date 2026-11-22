@@ -1,20 +1,17 @@
 # ===========================================================================
-# SmartExamSeat - MAIN demo dataset (10 majors, 4 years, 10 rooms)
+# RECIPE for datasets/big.xlsx - the MAIN demo dataset
+# (10 majors, 4 years, 10 rooms of 9x9)
 # ===========================================================================
-# generate_data.py reads this file and writes data.pl:
-#   1. students for every (major, year) cohort,
-#   2. each cohort's OWN subjects (subjects are never shared between cohorts),
-#   3. the rooms and the exam period's sessions,
-#   4. the exam timetable - which subject is examined in which session - is
-#      found by the Prolog timetabling CSP in timetable.pl.
+# The app and `make data` read the WORKBOOK (datasets/big.xlsx), not this
+# file. This recipe only says how to make that workbook with a random
+# roster, for testing:
 #
-# This is the main demo dataset. To use it:
-#   cp config_big.toml config.toml && make data
-# The tests expect this dataset in data.pl.
+#     make workbooks          # rewrites datasets/big.xlsx and small.xlsx
 #
-# After editing, run:   make data
+# Edit the workbook directly to change real students, subjects or rooms.
 # ===========================================================================
 
+title = "SmartExamSeat - main demo dataset (10 majors, 4 years)"
 seed = 20261115               # change for a different random roster
 years = [1, 2, 3, 4]
 

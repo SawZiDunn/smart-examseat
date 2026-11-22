@@ -13,7 +13,7 @@
     <span class="logo">SES</span>
     <div>
       <h1>SmartExamSeat</h1>
-      <p>Start by importing a dataset config</p>
+      <p>Start by importing a dataset workbook</p>
     </div>
   </div>
   {% if current %}
@@ -27,18 +27,25 @@
 <div class="importpage">
   <section class="list-wrap">
     <div class="list-head">
-      <h2>Import a config</h2>
-      <span class="hint">The app generates the students and subjects, builds the exam timetable with
+      <h2>Import a dataset workbook</h2>
+      <span class="hint">An Excel workbook (<code>.xlsx</code>) with the students, the subjects of every
+        major and year, the rooms and the exam period. The app checks it, builds the exam timetable with
         <code>timetable.pl</code> and loads the result, the same as <code>make data</code>.</span>
     </div>
 
     <div class="upload">
       <label class="dropzone" id="dropzone">
-        <input type="file" id="file" accept=".toml">
-        <span id="dropname">Drop a <code>.toml</code> config here (e.g. <code>config_big.toml</code>
-          or <code>config_small.toml</code>), or click to choose one</span>
+        <input type="file" id="file" accept=".xlsx">
+        <span id="dropname">Drop an <code>.xlsx</code> workbook here (e.g. <code>datasets/big.xlsx</code>
+          or <code>datasets/small.xlsx</code>), or click to choose one</span>
       </label>
     </div>
+
+    <p class="hint template-hint">Need the format? Download an example and edit it:
+      <a href="{{ url_for('example_workbook', name='small') }}">small.xlsx</a> (120 students) or
+      <a href="{{ url_for('example_workbook', name='big') }}">big.xlsx</a> (1,925 students).
+      Sheets: <b>Summary</b> (worked out, read only), <b>Students</b>, <b>Subjects</b>, <b>Rooms</b>,
+      <b>Exam period</b>, <b>Settings</b>.</p>
   </section>
 
   <div id="status" class="status hidden" role="status"></div>
@@ -54,8 +61,8 @@ function busy(on) { document.getElementById("file").disabled = on; }
 
 async function run(body, name) {
   busy(true);
-  show("busy", `Generating <code>${name}</code>: students, subjects, then the timetable&hellip; ` +
-               `(a few seconds for a big config)`);
+  show("busy", `Reading <code>${name}</code>, then building the timetable&hellip; ` +
+               `(a few seconds for a big workbook)`);
   try {
     const res = await fetch("/api/import", body);
     const data = await res.json();
@@ -66,7 +73,8 @@ async function run(body, name) {
                `${data.timetable ? data.timetable + ". " : ""}Opening the data&hellip;`);
     setTimeout(() => location.href = "/data", 700);
   } catch (e) {
-    show("error", `<b>${name}</b> could not be loaded.<br>${e.message.replace(/</g, "&lt;")}`);
+    show("error", `<b>${name}</b> could not be loaded.<br>` +
+               `<span class="prewrap">${e.message.replace(/</g, "&lt;")}</span>`);
     busy(false);
   }
 }
@@ -75,7 +83,7 @@ function upload(file) {
   if (!file) return;
   document.getElementById("dropname").textContent = file.name;
   const form = new FormData();
-  form.append("config", file);
+  form.append("workbook", file);
   run({ method: "POST", body: form }, file.name);
 }
 document.getElementById("file").onchange = e => upload(e.target.files[0]);

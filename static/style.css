@@ -434,6 +434,9 @@ a.change-config {
 }
 a.change-config:hover { border-color: var(--accent); color: var(--accent); }
 
+.template-hint { margin-top: 14px; }
+.template-hint a { color: var(--accent); font-weight: 600; }
+.prewrap { white-space: pre-wrap; }
 @media (max-width: 640px) { .importpage { padding: 14px 16px 32px; } }
 
 /* ---------- constraints page (/constraints) ---------- */

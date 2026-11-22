@@ -1,5 +1,5 @@
 # ===========================================================================
-# SmartExamSeat - SMALL demo dataset
+# RECIPE for datasets/small.xlsx - the SMALL demo dataset
 # ===========================================================================
 # Small enough to picture in your head:
 #
@@ -11,16 +11,13 @@
 #
 #   = 120 students, 12 subjects, 300 exam seats to fill
 #   3 exam days x 2 slots = 6 sessions
-#   2 open rooms of 8x8 = 128 seats (8 accessible), 1 room closed
+#   2 rooms of 8x8 = 128 seats (8 accessible)
 #
-# To use it:
-#   cp config_small.toml config.toml && make data && make run
-# Afterwards, back to the main set:
-#   cp config_big.toml config.toml && make data
-# While the small set is in data.pl, some Python tests fail (they expect
-# the full dataset).
+# RECIPE for datasets/small.xlsx: the app reads the workbook, not this file.
+# `make workbooks` rewrites the workbook from this recipe (random names).
 # ===========================================================================
 
+title = "SmartExamSeat - small demo dataset (SE, CS, EE)"
 seed = 20261115
 years = [1, 2]
 

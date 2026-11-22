@@ -2,8 +2,8 @@
 """
 SmartExamSeat - dataset generator (Member A).
 
-Reads config.toml and writes Prolog fact files that follow the schema in
-README.md section 8.2:
+Reads the dataset workbook (datasets/big.xlsx by default, see workbook.py)
+and writes Prolog fact files that follow the schema in README.md section 8.2:
 
     student(Id, Major, Year, Access).
     student_name(Id, Name).
@@ -14,25 +14,27 @@ README.md section 8.2:
     room(RoomId, Rows, Cols, Available).
     seat(RoomId, Row, Col, SeatType).
 
-How the full dataset is built:
+How the dataset is built:
 
-    1. every (major, year) cohort gets its own students and its OWN subjects
-       (counts from config.toml; subjects are never shared between cohorts),
-       and every student of a cohort is enrolled in all of its subjects;
-    2. rooms and the exam period's sessions come from config.toml;
-    3. the exam timetable (exam/2: which session each subject is in) is found
+    1. the workbook lists the students, each (major, year) cohort's OWN
+       subjects, the rooms and the exam period; every student of a cohort is
+       enrolled in all of its subjects;
+    2. the exam timetable (exam/2: which session each subject is in) is found
        by the Prolog timetabling CSP in timetable.pl, which guarantees no
        student has two exams in one session and no session overflows.
 
 Two datasets are produced:
 
     data_sample.pl   tiny smoke-test set  (20 students, 2 rooms, 1 session)
-    data.pl          full dataset described by config.toml
+    data.pl          the dataset in the workbook
 
 Usage:
-    python3 generate_data.py                  # write both files
-    python3 generate_data.py --stats          # also print a capacity report
-    python3 generate_data.py --config my.toml --out somewhere/
+    python3 generate_data.py                       # datasets/big.xlsx
+    python3 generate_data.py --stats               # also print a capacity report
+    python3 generate_data.py --workbook datasets/small.xlsx --out somewhere/
+
+The random-roster functions below (cohorts_from, build_full, ...) read a
+recipe (datasets/*.toml); workbook.py uses them to make the demo workbooks.
 """
 
 from __future__ import annotations
@@ -231,9 +233,9 @@ def run_timetabler(ds: Dataset, fill: int) -> tuple:
 
     exams, summary = [], ""
     for line in proc.stdout.splitlines():
-        m = re.fullmatch(r"exam\((\w+), (\w+)\)\.", line.strip())
+        m = re.fullmatch(r"exam\((\w+|'(?:[^'\\]|\\.)*'), (\w+)\)\.", line.strip())
         if m:
-            exams.append((m.group(1), m.group(2)))
+            exams.append((unquote(m.group(1)), m.group(2)))
         elif line.startswith("% timetable:"):
             summary = line[2:]
         elif line.startswith("FAILED:"):
@@ -243,6 +245,13 @@ def run_timetabler(ds: Dataset, fill: int) -> tuple:
         raise GenerationError(f"timetabling failed (exit {proc.returncode}):\n"
                               f"{proc.stdout}\n{proc.stderr}")
     return exams, summary
+
+
+def unquote(atom: str) -> str:
+    """'se-101' -> se-101 (the reverse of q() for quoted atoms)."""
+    if atom.startswith("'"):
+        return re.sub(r"\\(.)", r"\1", atom[1:-1])
+    return atom
 
 
 def build_sample() -> Dataset:
@@ -292,8 +301,8 @@ def q(value) -> str:
 def write_prolog(path: str, ds: Dataset, title: str) -> None:
     lines = [
         f"% {title}",
-        "% GENERATED FILE - produced by generate_data.py from config.toml,",
-        "% do not edit by hand. Schema: README.md section 8.2.",
+        "% GENERATED FILE - produced by generate_data.py, do not edit by hand.",
+        "% Schema: README.md section 8.2.",
         "",
         ":- discontiguous student/4.",
         ":- discontiguous student_name/2.",
@@ -416,16 +425,18 @@ def generate(cfg: dict, verbose: bool = False) -> tuple:
     fill = cfg.get("timetable", {}).get("max_fill_percent", 80)
     full.exams, summary = run_timetabler(full, fill)
     try:
-        check_and_report(full, "data.pl (full)", verbose)
+        check_and_report(full, "dataset", verbose)
     except AssertionError as exc:
         raise GenerationError(str(exc)) from exc
     return full, summary
 
 
 def main() -> None:
+    import workbook                         # needs openpyxl; tests import us without it
+
     ap = argparse.ArgumentParser(description="SmartExamSeat dataset generator")
-    ap.add_argument("--config", default=os.path.join(HERE, "config.toml"),
-                    help="dataset configuration (default: config.toml)")
+    ap.add_argument("--workbook", default=os.path.join(HERE, "datasets", "big.xlsx"),
+                    help="dataset workbook (default: datasets/big.xlsx)")
     ap.add_argument("--stats", action="store_true", help="print a capacity report")
     ap.add_argument("--out", default=HERE, help="output directory")
     args = ap.parse_args()
@@ -436,17 +447,13 @@ def main() -> None:
                  "SmartExamSeat tiny sample dataset")
 
     try:
-        cfg = load_config(args.config)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        sys.exit(f"{args.config}: {exc}")
-    try:
-        full, summary = generate(cfg, args.stats)
-    except ConfigError as exc:
-        sys.exit(f"{args.config}: {exc}")
+        full, summary = workbook.generate_from_workbook(args.workbook, args.stats)
+    except OSError as exc:
+        sys.exit(f"{args.workbook}: {exc}")
     except GenerationError as exc:
-        sys.exit(str(exc))
+        sys.exit(f"{args.workbook}: {exc}")
     write_prolog(os.path.join(args.out, "data.pl"), full,
-                 "SmartExamSeat full dataset")
+                 f"SmartExamSeat dataset from {os.path.basename(args.workbook)}")
 
     if summary:
         print(f"\n{summary}")

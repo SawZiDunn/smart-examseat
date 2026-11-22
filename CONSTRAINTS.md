@@ -230,7 +230,7 @@ violation(se101-E) :-
 
 ---
 
-## 3. Things to show (on `config_small.toml`)
+## 3. Things to show (on `datasets/small.xlsx`)
 
 Each one is a few clicks. Press **Run** after every change.
 

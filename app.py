@@ -7,9 +7,9 @@ app.py - the admin web UI for SmartExamSeat (Member C).
     python3 app.py --port 8080
 
 Without --dataset the app starts with no data: the admin first uploads a
-config (e.g. config_small.toml or config_big.toml) on /import, and the app
-generates and timetables it - what `make data` does - and loads
-the result. Generated files go to out/ and never replace data.pl.
+dataset workbook (e.g. datasets/big.xlsx or datasets/small.xlsx, format in
+workbook.py) on /import, and the app timetables it - what `make data` does -
+and loads the result. Generated files go to out/ and never replace data.pl.
 
 The admin picks a session plus optional year/major filters, presses Generate,
 and gets the seat grid for each room, a student list, the validator report,
@@ -25,13 +25,13 @@ import os
 import re
 import threading
 import time
-import tomllib
 
 from flask import (Flask, jsonify, redirect, render_template, request,
                    Response, send_file, url_for)
 
 import export
 import generate_data
+import workbook
 from bridge import SeatingEngine, PrologError
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -67,7 +67,7 @@ def require_data():
         return None
     if request.path.startswith(("/api/", "/export/")):
         return jsonify({"error": "no_dataset",
-                        "message": "Import a config first."}), 409
+                        "message": "Import a dataset workbook first."}), 409
     return redirect(url_for("import_page"))
 
 
@@ -180,15 +180,15 @@ def index():
 
 
 # ---------------------------------------------------------------------------
-# Importing a config: generate + timetable + load, without `make data`
+# Importing a dataset workbook: timetable + load, without `make data`
 # ---------------------------------------------------------------------------
 
-def import_config(cfg: dict, name: str) -> dict:
-    """Generate and timetable a config, write it to out/, load it."""
+def import_workbook(data: bytes, name: str) -> dict:
+    """Read and timetable a workbook, write it to out/, load it."""
     started = time.time()
-    ds, timetable = generate_data.generate(cfg)
+    ds, timetable = workbook.generate_from_workbook(data)
     os.makedirs(OUT_DIR, exist_ok=True)
-    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(name)[0]) or "config"
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(name)[0]) or "dataset"
     path = os.path.join(OUT_DIR, f"data_{stem}.pl")
     generate_data.write_prolog(path, ds, f"SmartExamSeat dataset from {name}")
     with _LOCK:
@@ -207,20 +207,28 @@ def import_page():
                            current=ENGINE.dataset if ENGINE else None)
 
 
+@app.route("/import/example/<name>.xlsx")
+def example_workbook(name):
+    """The demo workbooks, to download and use as a template."""
+    if name not in ("big", "small"):
+        return jsonify({"ok": False, "message": "No such example."}), 404
+    return send_file(os.path.join(HERE, "datasets", f"{name}.xlsx"),
+                     as_attachment=True, download_name=f"{name}.xlsx")
+
+
 @app.route("/api/import", methods=["POST"])
 def api_import():
-    """Upload a .toml config (form field `config`)."""
-    upload = request.files.get("config")
+    """Upload a dataset workbook (form field `workbook`)."""
+    upload = request.files.get("workbook")
     if not upload or not upload.filename:
-        return jsonify({"ok": False, "message": "Choose a .toml config file."}), 400
+        return jsonify({"ok": False, "message": "Choose an .xlsx workbook."}), 400
     name = os.path.basename(upload.filename)
-    if not name.endswith(".toml"):
-        return jsonify({"ok": False, "message": "Upload a .toml config file."}), 400
+    if not name.lower().endswith(".xlsx"):
+        return jsonify({"ok": False,
+                        "message": "Upload an Excel workbook (.xlsx). In Excel or "
+                                   "Google Sheets: File > Save as / Download > .xlsx."}), 400
     try:
-        cfg = tomllib.loads(upload.read().decode("utf-8"))
-        return jsonify(import_config(cfg, name))
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
-        return jsonify({"ok": False, "message": f"Not a valid TOML file: {exc}"}), 400
+        return jsonify(import_workbook(upload.read(), name))
     except generate_data.GenerationError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
 
@@ -556,7 +564,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="SmartExamSeat web UI")
     ap.add_argument("--dataset", default=None,
                     help="start with this data file (e.g. data.pl); "
-                         "default: start empty and import a config")
+                         "default: start empty and import a workbook")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=5000)
     ap.add_argument("--debug", action="store_true")
@@ -572,7 +580,7 @@ def main() -> None:
               f"{summary['seats']} seats")
     else:
         ENGINE = SeatingEngine(empty=True)
-        print("  no data yet: open the page and import a config")
+        print("  no data yet: open the page and import a dataset workbook")
     print(f"  serving on http://{args.host}:{args.port}")
 
     # One Prolog engine, so keep Flask single-threaded.
