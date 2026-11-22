@@ -17,6 +17,8 @@
     </div>
   </div>
   <div class="topbar-links">
+  <a class="change-config" href="{{ url_for('planner_page') }}" title="How many days, slots and rooms are needed">Planner</a>
+  <a class="change-config" href="{{ url_for('constraints_page') }}" title="Add, remove and change constraints">Constraints</a>
   <a class="change-config" href="{{ url_for('import_page') }}" title="Load a different config">Change config</a>
   <a class="dataset dataset-link" href="{{ url_for('index') }}" title="Back to seating">
     <code>&larr; Back to seating</code>

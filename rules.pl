@@ -14,6 +14,8 @@
         max_same_exam_per_room/2,
         total_capacity/2,
         needs_accessible/1,
+        requires_accessible_seat/1,
+        usable_capacity/2,
         seat_fits/2,
         separation_ok/3,
         room_seats/2,
@@ -25,6 +27,7 @@
    ]).
 
 :- use_module(library(lists)).
+:- use_module(constraints).
 
 % The data facts live in the user module (data.pl is consulted by main.pl),
 % so declare them here to keep the module system happy.
@@ -46,7 +49,9 @@
 %! min_separation(-N) is det.
 %  Two students sitting the SAME exam in the SAME row must be at least
 %  N empty seats apart, i.e. their column distance must be >= N + 1.
-min_separation(1).
+%  N comes from the active hard separation(N) constraint (constraints.pl);
+%  0 when there is none.
+min_separation(N) :- constraints:hard_separation(N).
 
 %! max_retries(-N) is det.
 %  Capacity-first reshuffles before room expansion is allowed. Further
@@ -59,9 +64,11 @@ max_retries(3).
 % ---------------------------------------------------------------------------
 
 %! available_room(?RoomId, ?Rows, ?Cols) is nondet.
-%  Only rooms flagged `yes` may ever be used (hard constraint room_available).
+%  Only rooms flagged `yes` may ever be used (hard constraint room_available),
+%  and not rooms closed by a room_closed(R) constraint.
 available_room(RoomId, Rows, Cols) :-
-    user:room(RoomId, Rows, Cols, yes).
+    user:room(RoomId, Rows, Cols, yes),
+    \+ constraints:room_closed(RoomId).
 
 %! room_seats(+RoomId, -Seats) is det.
 %  Seats = [seat(Row, Col, SeatType), ...] in column-major order.
@@ -100,6 +107,13 @@ room_accessible_capacity(RoomId, N) :-
     available_room(RoomId, _, _),
     aggregate_all(count, user:seat(RoomId, _, _, accessible), N).
 
+%! usable_capacity(+RoomId, -N) is det.
+%  The seats the allocator may fill: all of them, or P% under room_fill(P).
+usable_capacity(RoomId, N) :-
+    room_capacity(RoomId, Cap),
+    constraints:room_fill_percent(P),
+    N is Cap * P // 100.
+
 %! max_same_exam_per_room(+RoomId, -N) is det.
 %  Upper bound on how many students of ONE exam a room can hold.
 %
@@ -112,7 +126,16 @@ max_same_exam_per_room(RoomId, N) :-
     min_separation(S),
     Step is S + 1,
     PerRow is (Cols + Step - 1) // Step,
-    N is Rows * PerRow.
+    ByRows is Rows * PerRow,
+    % a hard column_gap(G) limits each column the same way
+    findall(G, constraints:active(_, column_gap(G), hard), Gs),
+    (   Gs \== []
+    ->  max_list(Gs, MaxG),
+        StepC is MaxG + 1,
+        PerCol is (Rows + StepC - 1) // StepC,
+        N is min(ByRows, Cols * PerCol)
+    ;   N = ByRows
+    ).
 
 %! total_capacity(-Seats, -AccessibleSeats) is det.
 %  Seats across every available room: the most students one session can
@@ -128,9 +151,17 @@ total_capacity(Seats, AccessibleSeats) :-
 % ---------------------------------------------------------------------------
 
 %! needs_accessible(+StudentId) is semidet.
+%  The student is flagged as needing an accessible seat (a fact of the data).
 needs_accessible(StudentId) :-
     user:student(StudentId, _, _, Access),
     Access \== none.
+
+%! requires_accessible_seat(+StudentId) is semidet.
+%  ... and the hard accessible_seats constraint is on, so the solvers must
+%  give them one.
+requires_accessible_seat(StudentId) :-
+    needs_accessible(StudentId),
+    constraints:accessible_rule(hard).
 
 %! seat_fits(+StudentId, +SeatType) is semidet.
 %  A student who needs accessibility may ONLY take an accessible seat.
@@ -140,7 +171,7 @@ seat_fits(StudentId, accessible) :-
     !,
     user:student(StudentId, _, _, _).
 seat_fits(StudentId, normal) :-
-    \+ needs_accessible(StudentId).
+    \+ requires_accessible_seat(StudentId).
 
 student_major(StudentId, Major) :- user:student(StudentId, Major, _, _).
 student_year(StudentId, Year)   :- user:student(StudentId, _, Year, _).

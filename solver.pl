@@ -4,13 +4,12 @@
 % CSP model
 %   Variables : the students allocated to this room
 %   Domains   : the seats of this room
-%   Constraints (all hard):
-%       one_seat_per_student  - every student gets exactly one seat
-%       seat_unique           - no seat is given to two students
-%       room_capacity         - cannot seat more students than seats
-%       accessibility         - Access \= none  =>  SeatType = accessible
-%       separation            - two students of the SAME exam in the SAME row
-%                               must be >= min_separation+1 columns apart
+%   Constraints:
+%       always   one_seat_per_student, seat_unique, room_capacity
+%       active   whatever constraints.pl holds: separation(N), column_gap(N),
+%                no_diagonal, different_major_neighbours, accessible_seats,
+%                room_fill(P), custom seat rules written in Prolog.
+%                Hard ones prune the search; soft ones order the seats.
 %
 % Search: depth-first backtracking over students, with
 %   - variable ordering  : most constrained student first
@@ -27,7 +26,10 @@
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
 :- use_module(library(assoc)).
+:- use_module(library(aggregate)).
 :- use_module(rules).
+:- use_module(constraints, []).
+:- use_module(custom_rules, []).
 
 %! inference_budget(+NStudents, -Limit) is det.
 %  Backtracking is exponential in the worst case. Rather than hang on an
@@ -74,7 +76,7 @@ solve_room(_Session, RoomId, Students, Result, Options) :-
 
 precheck(RoomId, Students, Problem) :-
     length(Students, Needed),
-    rules:room_capacity(RoomId, Have),
+    rules:usable_capacity(RoomId, Have),             % all seats, or room_fill(P)
     (   Needed > Have
     ->  Problem = not_enough_seats(RoomId, Needed, Have)
     ;   include(needs_access, Students, AccessList),
@@ -86,7 +88,7 @@ precheck(RoomId, Students, Problem) :-
     ->  Problem = no_solution(RoomId)
     ).
 
-needs_access(s(StudentId, _)) :- rules:needs_accessible(StudentId).
+needs_access(s(StudentId, _)) :- rules:requires_accessible_seat(StudentId).
 
 exam_exceeds_room_limit(RoomId, Students) :-
     rules:max_same_exam_per_room(RoomId, Limit),
@@ -108,15 +110,24 @@ search(RoomId, Students, Result, Options) :-
     order_students(Students, Ordered),
     length(Students, N),
     ( memberchk(budget(B), Options) -> Limit = B ; inference_budget(N, Limit) ),
-    search_with_budget(RoomId, Ordered, AccessSeats, AllSeats, Limit, Result).
+    % Which optional rules are active right now (constraints.pl). They are
+    % read once per room, not once per seat.
+    constraints:seat_rules(HardRules, SoftRules),
+    constraints:custom_ids(seat, hard, CustomIds),
+    (   constraints:accessible_rule(soft(AW)) -> SoftAll = [accessible_seats-AW | SoftRules]
+    ;   SoftAll = SoftRules
+    ),
+    rules:min_separation(Sep),
+    Need is Sep + 1,
+    Ctx = ctx(RoomId, AccessSeats, AllSeats, HardRules, SoftAll, CustomIds, Need),
+    search_with_budget(RoomId, Ordered, Ctx, Limit, Result).
 
-search_with_budget(RoomId, Ordered, AccessSeats, AllSeats, Limit, Result) :-
+search_with_budget(RoomId, Ordered, Ctx, Limit, Result) :-
     empty_assoc(Used0),
     empty_assoc(Rows0),
     (   catch(
             call_with_inference_limit(
-                assign(Ordered, RoomId, AccessSeats, AllSeats,
-                       Used0, Rows0, [], Rev),
+                assign(Ordered, Ctx, Used0, Rows0, [], Rev),
                 Limit, Outcome),
             _Error, (Outcome = exception, Rev = []))
     ->  (   Outcome == inference_limit_exceeded
@@ -131,35 +142,79 @@ search_with_budget(RoomId, Ordered, AccessSeats, AllSeats, Limit, Result) :-
 
 is_accessible_seat(seat(_, _, accessible)).
 
-%! assign(+Students, +RoomId, +AccessSeats, +AllSeats,
-%!        +UsedSeats, +ExamRowCols, +Acc, -Assignments) is nondet.
+%! assign(+Students, +Ctx, +UsedSeats, +ExamRowCols, +Acc, -Assignments)
+%! is nondet.
 %
 %  This is the backtracking core. Each recursive step picks one seat for the
 %  head student with member/2; if a later student cannot be placed, Prolog
 %  backtracks into that member/2 and tries the next seat automatically.
-assign([], _, _, _, _, _, Acc, Acc).
-assign([s(StudentId, Code) | Rest], RoomId, AccessSeats, AllSeats,
-       Used, Rows, Acc, Out) :-
-    domain(StudentId, AccessSeats, AllSeats, Domain),
-    member(seat(Row, Col, Type), Domain),
+%
+%  Used maps Row-Col to p(Student, Exam) so neighbour rules can look around
+%  a seat. Every hard rule in the constraint knowledge base is checked right
+%  after the seat is chosen; soft rules only change the ORDER in which seats
+%  are tried (cheapest first).
+assign([], _, _, _, Acc, Acc).
+assign([s(StudentId, Code) | Rest], Ctx, Used, Rows, Acc, Out) :-
+    Ctx = ctx(RoomId, _, _, Hard, _, CustomIds, Need),
+    candidate_seats(StudentId, Code, Ctx, Used, Seats),
+    member(seat(Row, Col, Type), Seats),
     \+ get_assoc(Row-Col, Used, _),                      % seat_unique
     rules:seat_fits(StudentId, Type),                    % accessibility
     exam_row_cols(Code, Row, Rows, Cols),
-    rules:separation_ok(Row, Col, Cols),                 % separation
-    put_assoc(Row-Col, Used, used, Used1),
+    far_enough(Cols, Col, Need),                         % separation
+    \+ ( member(Rule, Hard),                             % other hard rules
+          constraints:seat_conflict(Rule, StudentId, Code, Row, Col, Used) ),
+    New = assign(StudentId, Code, RoomId, Row, Col),
+    custom_rules:seat_rules_ok(CustomIds, [New | Acc]),  % rules typed in Prolog
+    put_assoc(Row-Col, Used, p(StudentId, Code), Used1),
     put_assoc(Code-Row, Rows, [Col | Cols], Rows1),
-    assign(Rest, RoomId, AccessSeats, AllSeats, Used1, Rows1,
-           [assign(StudentId, Code, RoomId, Row, Col) | Acc], Out).
+    assign(Rest, Ctx, Used1, Rows1, [New | Acc], Out).
+
+%! candidate_seats(+Student, +Code, +Ctx, +Used, -Seats) is det.
+%  The domain, in the order to try it: column-first, or cheapest-first by
+%  soft-constraint penalty when soft seat rules are active (a stable sort, so
+%  equal-cost seats keep the column-first order).
+candidate_seats(StudentId, _, ctx(_, AccessSeats, AllSeats, _, [], _, _), _, Seats) :- !,
+    domain(StudentId, AccessSeats, AllSeats, Seats).
+candidate_seats(StudentId, Code, ctx(_, AccessSeats, AllSeats, _, Soft, _, _), Used, Seats) :-
+    domain(StudentId, AccessSeats, AllSeats, Domain),
+    findall(Cost-seat(Row, Col, Type),
+            ( member(seat(Row, Col, Type), Domain),
+              \+ get_assoc(Row-Col, Used, _),
+              soft_cost(Soft, StudentId, Code, Row, Col, Type, Used, Cost) ),
+            Keyed),
+    keysort(Keyed, Sorted),
+    pairs_values(Sorted, Seats).
+
+soft_cost(Soft, StudentId, Code, Row, Col, Type, Used, Cost) :-
+    foldl(add_soft(StudentId, Code, Row, Col, Type, Used), Soft, 0, Cost).
+
+add_soft(StudentId, _, _, _, Type, _, accessible_seats-W, C0, C) :- !,
+    (   rules:needs_accessible(StudentId), Type \== accessible
+    ->  C is C0 + W ; C = C0 ).
+add_soft(StudentId, Code, Row, Col, _, Used, Rule-W, C0, C) :-
+    aggregate_all(count,
+                  constraints:seat_conflict(Rule, StudentId, Code, Row, Col, Used), N),
+    C is C0 + N * W.
 
 %! domain(+StudentId, +AccessSeats, +AllSeats, -Domain) is det.
-%  A student who needs accessibility has only the accessible seats in their
-%  domain. Everyone else can use the earliest remaining seat; accessible-seat
-%  students are ordered first so their required seats are assigned beforehand.
+%  A student who must have an accessible seat has only the accessible seats
+%  in their domain. Everyone else can use the earliest remaining seat;
+%  accessible-seat students are ordered first so their required seats are
+%  assigned beforehand.
 domain(StudentId, AccessSeats, AllSeats, Domain) :-
-    (   rules:needs_accessible(StudentId)
+    (   rules:requires_accessible_seat(StudentId)
     ->  Domain = AccessSeats
     ;   Domain = AllSeats
     ).
+
+%! far_enough(+OtherCols, +Col, +Need) is semidet.
+%  The separation rule (rules:separation_ok/3) with the distance read once per
+%  room: every same-exam column in this row is at least Need away.
+far_enough([], _, _).
+far_enough([C | Cs], Col, Need) :-
+    abs(Col - C) >= Need,
+    far_enough(Cs, Col, Need).
 
 exam_row_cols(Code, Row, Rows, Cols) :-
     ( get_assoc(Code-Row, Rows, Cols0) -> Cols = Cols0 ; Cols = [] ).

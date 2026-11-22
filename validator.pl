@@ -11,6 +11,8 @@
 % Rule is one of (README.md section 8.4):
 %   one_seat_per_student, seat_unique, room_capacity, room_available,
 %   accessibility, exam_clash, separation, missing_student
+% or the term of any other ACTIVE HARD constraint from constraints.pl that
+% the plan breaks, e.g. violation(column_gap(1), same_column(...)).
 % ===========================================================================
 
 :- module(validator, [
@@ -23,6 +25,7 @@
 :- use_module(library(pairs)).
 :- use_module(rules).
 :- use_module(allocation).
+:- use_module(constraints, []).
 
 
 %! validate_seating(+Session, +Filters, +Assignments, -Report) is det.
@@ -42,7 +45,24 @@ violation_of(Session, Filters, Assignments, V) :-
     ;   check_exam_clash(Session, Assignments, V)
     ;   check_missing_student(Session, Filters, Assignments, V)
     ;   check_right_exam(Session, Assignments, V)
+    ;   check_active_constraints(Assignments, V)
     ).
+
+
+% ---------------------------------------------------------------------------
+% every other active hard constraint (constraints.pl)
+%   separation and accessibility have their own checks above; closed rooms
+%   are caught by room_available.
+% ---------------------------------------------------------------------------
+check_active_constraints(Assignments, violation(C, W)) :-
+    constraints:active(_, C, hard),
+    constraints:constraint_level(C, Level),
+    memberchk(Level, [seat, room]),
+    \+ memberchk(C, [accessible_seats]),
+    C \= separation(_),
+    C \= room_closed(_),
+    constraints:seat_violations(C, Assignments, Ws),
+    member(W, Ws).
 
 
 % ---------------------------------------------------------------------------
@@ -90,7 +110,9 @@ check_room_available(Assignments, violation(room_available, D)) :-
     sort(Rooms, Used),
     member(RoomId, Used),
     \+ rules:available_room(RoomId, _, _),
-    (   user:room(RoomId, _, _, Avail)
+    (   constraints:room_closed(RoomId)
+    ->  D = room_closed_by_constraint(RoomId)
+    ;   user:room(RoomId, _, _, Avail)
     ->  D = room_not_available(RoomId, Avail)
     ;   D = room_unknown(RoomId)
     ).
@@ -114,7 +136,7 @@ check_room_capacity(Assignments, violation(room_capacity, D)) :-
 % ---------------------------------------------------------------------------
 check_accessibility(Assignments, violation(accessibility, D)) :-
     member(assign(S, _, RoomId, Row, Col), Assignments),
-    rules:needs_accessible(S),
+    rules:requires_accessible_seat(S),
     user:seat(RoomId, Row, Col, Type),
     Type \== accessible,
     user:student(S, _, _, Access),
@@ -222,5 +244,12 @@ explain_violation(violation(missing_student,
                             wrong_session(S, E, Sess)), Text) :- !,
     format(atom(Text), "~w is seated for ~w which is not in session ~w",
            [S, E, Sess]).
+explain_violation(violation(room_available,
+                            room_closed_by_constraint(R)), Text) :- !,
+    format(atom(Text), "room ~w is used but a room_closed constraint closes it", [R]).
+explain_violation(violation(Rule, Details), Text) :-
+    \+ atom(Rule), !,                       % an active constraint term
+    constraints:explain_witness(Rule, Details, Why),
+    format(atom(Text), "~w (~q)", [Why, Rule]).
 explain_violation(violation(Rule, Details), Text) :-
     format(atom(Text), "~w: ~q", [Rule, Details]).

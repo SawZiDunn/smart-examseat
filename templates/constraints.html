@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SmartExamSeat - Constraints</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">SES</span>
+    <div>
+      <h1>SmartExamSeat</h1>
+      <p>Constraints are Prolog facts: add, remove, change, run</p>
+    </div>
+  </div>
+  <div class="topbar-links">
+    <a class="change-config" href="{{ url_for('import_page') }}">Change config</a>
+    <a class="change-config" href="{{ url_for('planner_page') }}">Planner</a>
+    <a class="change-config" href="{{ url_for('data_page') }}">Data</a>
+    <a class="dataset dataset-link" href="{{ url_for('index') }}" title="Back to seating">
+      <code>&larr; Back to seating</code>
+      <span>{{ dataset }}</span>
+    </a>
+  </div>
+</header>
+
+<main class="cpage">
+  <!-- ===================== knowledge base ===================== -->
+  <section class="ccol">
+    <div class="card">
+      <div class="card-head">
+        <h2>Active constraints</h2>
+        <button id="reset" class="small-btn" title="Back to the four default constraints">Reset to defaults</button>
+      </div>
+      <p class="hint"><b>Hard</b> = the plan is only valid if it holds (the search prunes on it).
+        <b>Soft</b> = may be broken; each violation adds its weight to the penalty, and the search tries to avoid it.</p>
+      <table class="ctable">
+        <thead><tr><th>#</th><th>Constraint</th><th>Strength</th><th></th></tr></thead>
+        <tbody id="active"></tbody>
+      </table>
+      <details class="core">
+        <summary>Always on: what makes a plan a plan (<span id="ncore"></span>)</summary>
+        <ul id="core"></ul>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>Add a constraint</h2>
+      <div class="add-row">
+        <select id="cat"></select>
+      </div>
+      <p class="hint" id="cattext"></p>
+      <div id="params" class="params"></div>
+      <div class="add-row">
+        <span class="field-label">or type the term</span>
+        <input id="term" class="mono-input" placeholder="e.g. column_gap(1)" spellcheck="false">
+      </div>
+      <div class="add-row strength-row">
+        <label><input type="radio" name="s1" value="hard" checked> hard</label>
+        <label><input type="radio" name="s1" value="soft"> soft, weight
+          <input id="w1" type="number" min="1" value="5" class="w-input"></label>
+        <button id="add" class="primary">Add</button>
+      </div>
+      <div id="addmsg" class="msg hidden"></div>
+    </div>
+
+    <div class="card">
+      <h2>Write a rule in Prolog</h2>
+      <p class="hint">Describe what is <em>not</em> allowed: <code>violation(W) :- ...</code> is true wherever
+        the plan breaks your rule. Examples and every predicate you can use are in
+        <code>CONSTRAINTS.md</code>; click one below to try it.</p>
+      <div class="add-row">
+        <select id="clevel">
+          <option value="seat">Seating rule (sees the seat plan)</option>
+          <option value="timetable">Timetable rule (sees which exam is in which session)</option>
+        </select>
+        <input id="cname" placeholder="Name, e.g. no same major side by side">
+      </div>
+      <textarea id="crule" class="code" rows="5" spellcheck="false"
+        placeholder="violation(S1-S2) :-&#10;    next_to(S1, S2),&#10;    major(S1, M), major(S2, M),&#10;    S1 @< S2."></textarea>
+      <div class="examples" id="examples"></div>
+      <div class="add-row strength-row">
+        <label><input type="radio" name="s2" value="hard" checked> hard</label>
+        <label><input type="radio" name="s2" value="soft"> soft, weight
+          <input id="w2" type="number" min="1" value="2" class="w-input"></label>
+        <button id="addrule" class="primary">Add rule</button>
+      </div>
+      <div id="rulemsg" class="msg hidden"></div>
+      <details class="core">
+        <summary>Predicates you can use</summary>
+        <table class="vocab"><tbody id="vocab"></tbody></table>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>The knowledge base, as Prolog</h2>
+      <pre class="kb" id="kb"></pre>
+    </div>
+  </section>
+
+  <!-- ===================== results ===================== -->
+  <section class="ccol">
+    <div class="card run-card">
+      <div class="card-head">
+        <h2>Run</h2>
+        <button id="run" class="primary">Run with these constraints</button>
+      </div>
+      <p class="hint">Builds a new timetable, seats every session and checks every hard rule again.
+        The seating and data pages then show this result. A big dataset takes a few seconds.</p>
+      <div id="runstatus" class="status hidden"></div>
+    </div>
+
+    <div id="result" class="hidden">
+      <div class="statbar" id="rstats"></div>
+
+      <div class="card" id="problemscard">
+        <div class="card-head">
+          <h2>Why it is not feasible</h2>
+          <button id="why" class="small-btn">Which constraint is to blame?</button>
+        </div>
+        <ul class="problems" id="problems"></ul>
+        <div id="whyout"></div>
+      </div>
+
+      <div class="card">
+        <h2>Soft constraints <small class="muted">penalty = weight &times; violations</small></h2>
+        <table class="ctable"><thead><tr><th>Constraint</th><th>Weight</th><th>Violations</th><th>Penalty</th></tr></thead>
+          <tbody id="soft"></tbody></table>
+      </div>
+
+      <div class="card">
+        <h2>Rooms needed</h2>
+        <table class="ctable"><thead><tr><th>Room size</th><th>Needed at once</th><th>Available</th></tr></thead>
+          <tbody id="rooms"></tbody></table>
+      </div>
+
+      <div class="card">
+        <h2>Sessions</h2>
+        <table class="ctable"><thead><tr><th>Session</th><th>Students</th><th>Rooms</th><th>Retries</th><th>Result</th></tr></thead>
+          <tbody id="sessions"></tbody></table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const S = { cat: [], catalogue: null };
+const $ = id => document.getElementById(id);
+const esc = v => String(v).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const strengthOf = name => document.querySelector(`input[name=${name}]:checked`).value;
+
+// Prolog atom: bare if it can be, quoted otherwise ('2026-12-01', '09:00').
+function atom(v) {
+  v = String(v).trim();
+  if (/^-?\d+$/.test(v)) return v;
+  if (/^[a-z][A-Za-z0-9_]*$/.test(v)) return v;
+  return "'" + v.replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
+}
+
+function msg(id, kind, text) {
+  const el = $(id);
+  el.className = "msg " + kind;
+  el.textContent = text;
+}
+
+const EXAMPLES = [
+  { level: "seat", name: "no same major side by side",
+    rule: "violation(S1-S2) :-\n    next_to(S1, S2),\n    major(S1, M), major(S2, M),\n    S1 @< S2." },
+  { level: "seat", name: "year 1 students not in the front row",
+    rule: "violation(S) :-\n    seated(S, _, _, 1, _),\n    year(S, 1)." },
+  { level: "seat", name: "nobody directly behind someone of the same exam",
+    rule: "violation(S1-S2) :-\n    behind(S1, S2),\n    same_exam(S1, S2)." },
+  { level: "timetable", name: "no year 1 exams on Friday",
+    rule: "violation(E) :-\n    exam_session(E, S),\n    exam_cohort(E, _, 1),\n    session_weekday(S, fri)." },
+  { level: "timetable", name: "year 4 exams only in the morning",
+    rule: "violation(E) :-\n    exam_session(E, S),\n    exam_cohort(E, _, 4),\n    session_start(S, T), T \\== '09:00'." },
+  { level: "timetable", name: "SE exams not in the first session",
+    rule: "violation(E) :-\n    exam_session(E, S),\n    exam_cohort(E, se, _),\n    session_index(S, 1)." },
+];
+
+// ---------- knowledge base ----------
+async function load() {
+  const [c, cat] = await Promise.all([
+    fetch("/api/constraints").then(r => r.json()),
+    S.catalogue ? Promise.resolve(S.catalogue) : fetch("/api/catalogue").then(r => r.json()),
+  ]);
+  S.catalogue = cat;
+  S.cat = c.catalog.filter(x => x.name !== "custom");
+  renderActive(c.active);
+  $("core").innerHTML = c.core.map(r => `<li><code>${esc(r.name)}</code> ${esc(r.text)}</li>`).join("");
+  $("ncore").textContent = c.core.length;
+  $("vocab").innerHTML = c.vocabulary.map(v =>
+    `<tr><td><code>${esc(v.head)}</code></td><td>${esc(v.level)}</td><td>${esc(v.text)}</td></tr>`).join("");
+  if (!$("cat").options.length) renderCatalog();
+}
+
+function renderActive(active) {
+  $("active").innerHTML = active.map(a => `
+    <tr>
+      <td class="muted">${a.id}</td>
+      <td><code class="term">${esc(a.rule ? "custom: " + a.name : a.term)}</code>
+          <div class="ctext">${esc(a.text)}</div>
+          ${a.rule ? `<pre class="kb small">${esc(a.rule)}</pre>` : ""}</td>
+      <td class="nowrap">
+        <select data-id="${a.id}" class="strength">
+          <option value="hard" ${a.strength === "hard" ? "selected" : ""}>hard</option>
+          <option value="soft" ${a.strength === "soft" ? "selected" : ""}>soft</option>
+        </select>
+        <input type="number" min="1" class="w-input weight ${a.strength === "soft" ? "" : "hidden"}"
+               data-id="${a.id}" value="${a.weight || 5}" title="weight">
+      </td>
+      <td><button class="icon-btn" data-remove="${a.id}" title="Remove">&times;</button></td>
+    </tr>`).join("") || `<tr><td colspan="4" class="muted">No optional constraints. Only the core rules apply.</td></tr>`;
+
+  $("kb").textContent = active.map(a =>
+    `active(${a.id}, ${a.term}, ${a.strength === "hard" ? "hard" : `soft(${a.weight})`}).`).join("\n")
+    || "% no optional constraints";
+
+  document.querySelectorAll("[data-remove]").forEach(b => b.onclick = async () => {
+    await fetch("/api/constraints/" + b.dataset.remove, { method: "DELETE" });
+    load();
+  });
+  const change = async id => {
+    const strength = document.querySelector(`select.strength[data-id="${id}"]`).value;
+    const weight = document.querySelector(`input.weight[data-id="${id}"]`).value;
+    const r = await fetch("/api/constraints/" + id, { method: "PATCH",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ strength, weight }) });
+    if (!r.ok) alert((await r.json()).message);
+    load();
+  };
+  document.querySelectorAll("select.strength").forEach(s => s.onchange = () => change(s.dataset.id));
+  document.querySelectorAll("input.weight").forEach(w => w.onchange = () => change(w.dataset.id));
+}
+
+function renderCatalog() {
+  $("cat").innerHTML = S.cat.map((c, i) =>
+    `<option value="${i}">${esc(c.template)} &mdash; ${esc(c.level)}</option>`).join("");
+  $("cat").onchange = renderParams;
+  renderParams();
+  $("examples").innerHTML = "Examples: " + EXAMPLES.map((e, i) =>
+    `<button class="chip-btn" data-ex="${i}">${esc(e.name)}</button>`).join("");
+  document.querySelectorAll("[data-ex]").forEach(b => b.onclick = () => {
+    const e = EXAMPLES[b.dataset.ex];
+    $("clevel").value = e.level; $("cname").value = e.name; $("crule").value = e.rule;
+  });
+}
+
+function options(type) {
+  const cat = S.catalogue;
+  const uniq = xs => [...new Set(xs)];
+  if (type === "room") return cat.rooms.map(r => r.id);
+  if (type === "date") return uniq(cat.sessions.map(s => s.date));
+  if (type === "time") return uniq(cat.sessions.map(s => s.start));
+  if (type === "session") return cat.sessions.map(s => s.id);
+  if (type === "subject") return uniq(cat.sessions.flatMap(s => s.exams)).sort();
+  return null;
+}
+
+function renderParams() {
+  const c = S.cat[$("cat").value];
+  $("cattext").textContent = c.text + (c.strengths.length === 1 ? ` (${c.strengths[0]} only)` : "");
+  $("params").innerHTML = c.params.map(p => {
+    const opts = options(p.type);
+    const input = opts
+      ? `<select data-p="${p.name}">${opts.map(o => `<option>${esc(o)}</option>`).join("")}</select>`
+      : `<input data-p="${p.name}" type="number" min="${p.type === "percent" ? 1 : 0}"
+                ${p.type === "percent" ? 'max="100"' : ""} value="${p.type === "percent" ? 80 : 1}">`;
+    return `<label class="param"><span>${esc(p.name)}</span>${input}</label>`;
+  }).join("");
+  const only = c.strengths.length === 1 ? c.strengths[0] : null;
+  document.querySelectorAll("input[name=s1]").forEach(r => {
+    r.disabled = !!only && r.value !== only;
+    if (only) r.checked = r.value === only;
+  });
+  updateTerm();
+  document.querySelectorAll("#params [data-p]").forEach(el => el.oninput = updateTerm);
+}
+
+function updateTerm() {
+  const c = S.cat[$("cat").value];
+  const args = [...document.querySelectorAll("#params [data-p]")].map(el => atom(el.value));
+  $("term").value = args.length ? `${c.name}(${args.join(", ")})` : c.name;
+}
+
+$("add").onclick = async () => {
+  const r = await fetch("/api/constraints", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ term: $("term").value, strength: strengthOf("s1"), weight: $("w1").value }) });
+  const d = await r.json();
+  if (d.ok) { msg("addmsg", "ok", `Added as #${d.id}. Press Run to see the effect.`); load(); }
+  else msg("addmsg", "error", d.message);
+};
+
+$("addrule").onclick = async () => {
+  const r = await fetch("/api/constraints", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ custom: { level: $("clevel").value, name: $("cname").value, rule: $("crule").value },
+                           strength: strengthOf("s2"), weight: $("w2").value }) });
+  const d = await r.json();
+  if (d.ok) { msg("rulemsg", "ok", `Rule compiled and added as #${d.id}. Press Run to see the effect.`); load(); }
+  else msg("rulemsg", "error", d.message);
+};
+
+$("reset").onclick = async () => {
+  await fetch("/api/constraints/reset", { method: "POST" });
+  load();
+};
+
+// ---------- run ----------
+function showStatus(kind, html) {
+  const el = $("runstatus");
+  el.className = "status " + kind;
+  el.innerHTML = html;
+}
+
+$("run").onclick = async () => {
+  $("run").disabled = true;
+  showStatus("busy", "Building the timetable and seating every session&hellip;");
+  try {
+    const r = await fetch("/api/evaluate", { method: "POST" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    renderResult(await r.json());
+  } catch (e) {
+    showStatus("error", "Run failed: " + esc(e.message));
+  }
+  $("run").disabled = false;
+};
+
+function renderResult(d) {
+  showStatus(d.feasible ? "ok" : "error",
+    d.feasible ? `<b>Feasible.</b> Every hard constraint holds. Soft penalty: <b>${d.score}</b>. (${(d.millis / 1000).toFixed(1)} s)`
+               : `<b>Not feasible</b> with these hard constraints. (${(d.millis / 1000).toFixed(1)} s)`);
+  $("result").classList.remove("hidden");
+  const tt = d.timetable;
+  const cards = [
+    ["Result", d.feasible ? "feasible" : "infeasible"],
+    ["Soft penalty", d.score],
+    ["Sessions", tt ? tt.sessions : "-"],
+    ["Peak session", tt ? `${tt.peak} / ${tt.limit}` : "-"],
+    ["Rooms at peak", d.rooms.peak],
+  ];
+  $("rstats").innerHTML = cards.map(([k, v]) => `<div class="stat"><span>${k}</span><b>${esc(v)}</b></div>`).join("");
+
+  $("problemscard").classList.toggle("hidden", d.feasible);
+  $("problems").innerHTML = d.problems.map(p =>
+    `<li><code>${esc(p.where)}</code> ${esc(p.text)}</li>`).join("");
+  $("whyout").innerHTML = "";
+
+  $("soft").innerHTML = d.soft.map(s => `
+    <tr><td><code>${esc(s.term.length > 60 ? s.term.slice(0, 60) + "…" : s.term)}</code>
+          <div class="ctext">${esc(s.text)}</div>
+          ${s.examples.map(e => `<div class="example">e.g. ${esc(e)}</div>`).join("")}</td>
+        <td>${s.weight}</td><td>${s.count}</td><td><b>${s.penalty}</b></td></tr>`).join("")
+    || `<tr><td colspan="4" class="muted">${d.timetable ? "No soft constraints are active."
+                                                       : "Not scored: there is no plan to score."}</td></tr>`;
+
+  $("rooms").innerHTML = d.rooms.by_size.map(r =>
+    `<tr><td>${r.rows} &times; ${r.cols} (${r.seats} seats)</td><td><b>${r.needed}</b></td><td>${r.available}</td></tr>`).join("");
+
+  $("sessions").innerHTML = d.sessions.map(s =>
+    `<tr><td><b>${esc(s.session)}</b> <span class="muted">${esc(s.date)} ${esc(s.start)}</span></td>
+         <td>${s.students}</td><td>${s.rooms}</td><td>${s.retries}</td>
+         <td>${s.ok ? '<span class="pill ok">valid</span>' : `<span class="pill err">${esc(s.status)}</span>`}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="muted">No timetable, so nothing was seated.</td></tr>`;
+}
+
+$("why").onclick = async () => {
+  $("why").disabled = true;
+  $("whyout").innerHTML = `<p class="muted">Turning each hard constraint off in turn and running again&hellip;</p>`;
+  const d = await fetch("/api/why", { method: "POST" }).then(r => r.json());
+  const fixes = d.relaxations.filter(x => x.feasible);
+  $("whyout").innerHTML =
+    (fixes.length
+      ? `<p>Removing <b>any one</b> of these makes it feasible:</p>`
+      : `<p>No single constraint is to blame: removing any one of them is still not enough.</p>`) +
+    `<table class="ctable"><thead><tr><th>Without</th><th>Feasible?</th><th>Penalty</th></tr></thead><tbody>` +
+    d.relaxations.map(x => `<tr><td><code>${esc(x.term)}</code><div class="ctext">${esc(x.text)}</div></td>
+      <td>${x.feasible ? '<span class="pill ok">yes</span>' : '<span class="pill err">no</span>'}</td>
+      <td>${x.feasible ? x.score : "-"}</td></tr>`).join("") + `</tbody></table>`;
+  $("why").disabled = false;
+};
+
+load();
+</script>
+</body>
+</html>

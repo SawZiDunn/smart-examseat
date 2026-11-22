@@ -225,6 +225,178 @@ def api_import():
         return jsonify({"ok": False, "message": str(exc)}), 400
 
 
+# ---------------------------------------------------------------------------
+# Constraints: add, remove, change, run
+# ---------------------------------------------------------------------------
+
+@app.route("/constraints")
+def constraints_page():
+    return render_template("constraints.html", dataset=engine().dataset)
+
+
+@app.route("/api/constraints")
+def api_constraints():
+    with _LOCK:
+        return jsonify(engine().constraints())
+
+
+def _constraints_changed():
+    # Plans made under the old rules are no longer valid answers.
+    _CACHE.clear()
+
+
+@app.route("/api/constraints", methods=["POST"])
+def api_add_constraint():
+    body = request.get_json(silent=True) or {}
+    strength = body.get("strength", "hard")
+    weight = body.get("weight", 1)
+    try:
+        with _LOCK:
+            if body.get("custom"):
+                c = body["custom"]
+                out = engine().add_custom_rule(c.get("level", "seat"),
+                                               (c.get("name") or "custom rule").strip(),
+                                               c.get("rule", ""), strength, weight)
+            else:
+                out = engine().add_constraint((body.get("term") or "").strip(),
+                                              strength, weight)
+            _constraints_changed()
+    except (ValueError, TypeError) as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    return jsonify(out), (200 if out.get("ok") else 400)
+
+
+@app.route("/api/constraints/<int:cid>", methods=["DELETE"])
+def api_remove_constraint(cid):
+    with _LOCK:
+        engine().remove_constraint(cid)
+        _constraints_changed()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/constraints/<int:cid>", methods=["PATCH"])
+def api_set_strength(cid):
+    body = request.get_json(silent=True) or {}
+    try:
+        with _LOCK:
+            engine().set_strength(cid, body.get("strength", "hard"), body.get("weight", 1))
+            _constraints_changed()
+    except (ValueError, PrologError) as exc:
+        return jsonify({"ok": False, "message": f"Cannot change it: {exc}"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/constraints/reset", methods=["POST"])
+def api_reset_constraints():
+    with _LOCK:
+        engine().reset_constraints()
+        _constraints_changed()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/evaluate", methods=["POST"])
+def api_evaluate():
+    with _LOCK:
+        report = engine().evaluate()
+        _CACHE.clear()               # the timetable was rebuilt
+        _LAYOUTS.clear()
+    return jsonify(report)
+
+
+@app.route("/api/why", methods=["POST"])
+def api_why():
+    with _LOCK:
+        out = engine().why_infeasible()
+        _CACHE.clear()
+    return jsonify(out)
+
+
+# ---------------------------------------------------------------------------
+# Planner: how many days, slots and rooms do these students need?
+# ---------------------------------------------------------------------------
+
+_TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def read_option(body: dict) -> tuple:
+    """(days, slots, start, pool) from a planner request, checked."""
+    days = int(body.get("days", 0))
+    if not 1 <= days <= 60:
+        raise ValueError("days must be between 1 and 60")
+    slots = [(str(a), str(b)) for a, b in body.get("slots") or []]
+    if not 1 <= len(slots) <= 6 or not all(_TIME.match(a) and _TIME.match(b)
+                                           for a, b in slots):
+        raise ValueError("give 1 to 6 slots as HH:MM times")
+    start = str(body.get("start", ""))
+    if not _DATE.match(start):
+        raise ValueError("the start date must look like 2026-12-01")
+    pool = []
+    for p in body.get("pool") or []:
+        r, c, n = int(p["rows"]), int(p["cols"]), int(p["count"])
+        if not (1 <= r <= 40 and 1 <= c <= 40 and 0 <= n <= 60):
+            raise ValueError("rooms: rows and cols 1-40, count 0-60")
+        if n:
+            pool.append((r, c, n))
+    if not pool:
+        raise ValueError("the room pool is empty")
+    return days, slots, start, pool
+
+
+@app.route("/planner")
+def planner_page():
+    return render_template("planner.html", dataset=engine().dataset)
+
+
+@app.route("/api/plan/setup")
+def api_plan_setup():
+    """The loaded period and rooms, as the planner's starting point."""
+    with _LOCK:
+        cat = engine().catalogue()
+    sessions = cat["sessions"]
+    dates = sorted({s["date"] for s in sessions})
+    slots = sorted({(s["start"], s["end"]) for s in sessions})
+    groups: dict = {}
+    for r in cat["rooms"]:
+        if r["available"] == "yes":
+            key = (r["rows"], r["cols"])
+            groups[key] = groups.get(key, 0) + 1
+    pool = [{"rows": r, "cols": c, "count": n}
+            for (r, c), n in sorted(groups.items(), key=lambda kv: -kv[0][0] * kv[0][1])]
+    return jsonify({"start": dates[0] if dates else "2026-12-01",
+                    "days": len(dates), "slots": [list(s) for s in slots],
+                    "pool": pool, "students": cat["summary"]["students"]})
+
+
+@app.route("/api/plan/option", methods=["POST"])
+def api_plan_option():
+    body = request.get_json(silent=True) or {}
+    try:
+        days, slots, start, pool = read_option(body)
+        weights = body.get("weights") or {}
+        day_cost, room_cost = int(weights.get("day", 100)), int(weights.get("room", 50))
+        if day_cost < 0 or room_cost < 0:
+            raise ValueError("costs cannot be negative")
+    except (ValueError, TypeError, KeyError) as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    with _LOCK:
+        result = engine().plan_option(days, slots, start, pool, day_cost, room_cost)
+    return jsonify(result)
+
+
+@app.route("/api/plan/apply", methods=["POST"])
+def api_plan_apply():
+    try:
+        days, slots, start, pool = read_option(request.get_json(silent=True) or {})
+    except (ValueError, TypeError, KeyError) as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    with _LOCK:
+        engine().apply_option(days, slots, start, pool)
+        _CACHE.clear()
+        _LAYOUTS.clear()
+    return jsonify({"ok": True})
+
+
 @app.route("/data")
 def data_page():
     return render_template("data.html", dataset=engine().dataset)

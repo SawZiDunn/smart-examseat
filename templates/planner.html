@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SmartExamSeat - Planner</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">SES</span>
+    <div>
+      <h1>SmartExamSeat</h1>
+      <p>How many days, slots and rooms do these students need?</p>
+    </div>
+  </div>
+  <div class="topbar-links">
+    <a class="change-config" href="{{ url_for('constraints_page') }}">Constraints</a>
+    <a class="change-config" href="{{ url_for('data_page') }}">Data</a>
+    <a class="dataset dataset-link" href="{{ url_for('index') }}" title="Back to seating">
+      <code>&larr; Back to seating</code>
+      <span>{{ dataset }}</span>
+    </a>
+  </div>
+</header>
+
+<main class="cpage planner">
+  <!-- ===================== what to try ===================== -->
+  <section class="ccol">
+    <div class="card">
+      <h2>What to try</h2>
+      <p class="hint">The students and their subjects stay as loaded (<b id="nstudents">&hellip;</b> students).
+        Every combination of days and slots per day below is tried with the room pool, under the
+        constraints that are active on the <a href="{{ url_for('constraints_page') }}">Constraints</a> page.
+        Each one gets a real timetable and seating plan.</p>
+
+      <div class="form-grid">
+        <label class="param"><span>First exam day</span><input id="start" type="date"></label>
+        <label class="param"><span>Days from</span><input id="dmin" type="number" min="1" max="60"></label>
+        <label class="param"><span>to</span><input id="dmax" type="number" min="1" max="60"></label>
+      </div>
+      <p class="hint small-hint">Weekends are skipped.</p>
+
+      <span class="field-label">Slots per day</span>
+      <table class="ctable slots">
+        <thead><tr><th>Try</th><th>Slots a day</th><th>Times</th></tr></thead>
+        <tbody id="slots"></tbody>
+      </table>
+
+      <span class="field-label">Room pool <em>(the rooms that could be used)</em></span>
+      <table class="ctable">
+        <thead><tr><th>Rows</th><th>Columns</th><th>Seats</th><th>How many</th><th></th></tr></thead>
+        <tbody id="pool"></tbody>
+      </table>
+      <button id="addroom" class="small-btn">+ Add a room size</button>
+
+      <span class="field-label weights-label">Score <em>(lower is better)</em></span>
+      <div class="form-grid">
+        <label class="param"><span>Cost per exam day</span><input id="wday" type="number" min="0" value="100"></label>
+        <label class="param"><span>Cost per room needed</span><input id="wroom" type="number" min="0" value="50"></label>
+      </div>
+      <p class="hint">score = days &times; day cost + rooms needed &times; room cost + soft penalty
+        (from the soft constraints, e.g. students with two exams on one day).</p>
+
+      <div class="add-row strength-row">
+        <span class="muted" id="count"></span>
+        <button id="go" class="primary">Find the best</button>
+        <button id="stop" class="small-btn hidden">Stop</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== results ===================== -->
+  <section class="ccol">
+    <div id="status" class="status">Choose what to try, then press <b>Find the best</b>.</div>
+
+    <div class="card hidden" id="bestcard">
+      <div class="card-head">
+        <h2>Best option</h2>
+        <button id="apply" class="primary">Use this option</button>
+      </div>
+      <p id="best" class="best-text"></p>
+      <div id="applied" class="msg hidden"></div>
+    </div>
+
+    <div class="card hidden" id="resultscard">
+      <h2>Every option</h2>
+      <div class="table-scroll">
+        <table class="ctable results">
+          <thead><tr><th>Days</th><th>Slots</th><th>Result</th><th>Rooms needed</th>
+            <th>Penalty</th><th>Score</th><th></th></tr></thead>
+          <tbody id="results"></tbody>
+        </table>
+      </div>
+      <div class="legend score-legend">
+        <span class="key"><i style="background:#2f6fed"></i> days &times; day cost</span>
+        <span class="key"><i style="background:#8a5cf6"></i> rooms &times; room cost</span>
+        <span class="key"><i style="background:#e0891b"></i> soft penalty</span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = v => String(v).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const DEFAULT_SLOTS = [["09:00", "12:00"], ["13:00", "16:00"], ["16:30", "19:30"]];
+const S = { results: [], stop: false, best: null };
+
+// ---------- inputs ----------
+function slotRows(slots, tryK) {
+  const rows = [];
+  for (let k = 1; k <= 3; k++) {
+    const times = Array.from({ length: k }, (_, i) => slots[i] || DEFAULT_SLOTS[i]);
+    rows.push(`<tr>
+      <td><input type="checkbox" class="trysl" data-k="${k}" ${tryK.includes(k) ? "checked" : ""}></td>
+      <td>${k}</td>
+      <td>${times.map((t, i) => `<span class="slot-times">
+        <input type="time" class="st" data-k="${k}" data-i="${i}" value="${t[0]}">&ndash;<input
+               type="time" class="en" data-k="${k}" data-i="${i}" value="${t[1]}"></span>`).join(" ")}</td>
+    </tr>`);
+  }
+  $("slots").innerHTML = rows.join("");
+  document.querySelectorAll("#slots input").forEach(i => i.onchange = updateCount);
+}
+
+function poolRow(p) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td><input type="number" class="pr" min="1" max="40" value="${p.rows}"></td>
+    <td><input type="number" class="pc" min="1" max="40" value="${p.cols}"></td>
+    <td class="pseats muted"></td>
+    <td><input type="number" class="pn" min="0" max="60" value="${p.count}"></td>
+    <td><button class="icon-btn" title="Remove">&times;</button></td>`;
+  const seats = () => tr.querySelector(".pseats").textContent =
+    (+tr.querySelector(".pr").value) * (+tr.querySelector(".pc").value);
+  tr.querySelectorAll("input").forEach(i => i.oninput = () => { seats(); updateCount(); });
+  tr.querySelector("button").onclick = () => { tr.remove(); updateCount(); };
+  seats();
+  $("pool").appendChild(tr);
+}
+
+function readPool() {
+  return [...$("pool").querySelectorAll("tr")].map(tr => ({
+    rows: +tr.querySelector(".pr").value, cols: +tr.querySelector(".pc").value,
+    count: +tr.querySelector(".pn").value })).filter(p => p.rows && p.cols && p.count);
+}
+function slotsFor(k) {
+  return Array.from({ length: k }, (_, i) => [
+    document.querySelector(`.st[data-k="${k}"][data-i="${i}"]`).value,
+    document.querySelector(`.en[data-k="${k}"][data-i="${i}"]`).value]);
+}
+function options() {
+  const lo = +$("dmin").value, hi = +$("dmax").value;
+  const ks = [...document.querySelectorAll(".trysl:checked")].map(c => +c.dataset.k);
+  const out = [];
+  for (let d = lo; d <= hi; d++) for (const k of ks) out.push({ days: d, k });
+  return out;
+}
+function updateCount() {
+  const pool = readPool();
+  const seats = pool.reduce((n, p) => n + p.rows * p.cols * p.count, 0);
+  const rooms = pool.reduce((n, p) => n + p.count, 0);
+  $("count").textContent = `${options().length} option(s), pool of ${rooms} rooms / ${seats} seats`;
+}
+
+async function setup() {
+  const s = await fetch("/api/plan/setup").then(r => r.json());
+  $("nstudents").textContent = s.students.toLocaleString();
+  $("start").value = s.start;
+  $("dmin").value = Math.max(1, s.days - 3);
+  $("dmax").value = s.days + 2;
+  slotRows(s.slots.length ? s.slots : DEFAULT_SLOTS, [Math.min(Math.max(s.slots.length, 1), 3)]);
+  s.pool.forEach(poolRow);
+  ["dmin", "dmax", "start"].forEach(id => $(id).onchange = updateCount);
+  updateCount();
+}
+
+// ---------- running ----------
+function body(o) {
+  return { days: o.days, slots: slotsFor(o.k), start: $("start").value, pool: readPool(),
+           weights: { day: +$("wday").value, room: +$("wroom").value } };
+}
+
+function roomsText(r) {
+  return r.by_size.filter(s => s.needed > 0)
+    .map(s => `<span class="xchip"><b>${s.needed}</b><small>&times; ${s.rows}&times;${s.cols}</small></span>`).join("")
+    || '<span class="muted">-</span>';
+}
+
+function renderResults() {
+  const feasible = S.results.filter(r => r.feasible);
+  S.best = feasible.reduce((b, r) => (!b || r.score < b.score || (r.score === b.score && r.days < b.days)) ? r : b, null);
+  const maxScore = Math.max(1, ...feasible.map(r => r.score));
+  $("results").innerHTML = S.results.map((r, i) => `
+    <tr class="${r === S.best ? "best-row" : ""}">
+      <td><b>${r.days}</b></td>
+      <td>${r.slots} <span class="muted">(${r.sessions} session${r.sessions === 1 ? "" : "s"})</span></td>
+      <td>${r.feasible ? '<span class="pill ok">feasible</span>'
+                       : `<span class="pill err">no</span><div class="ctext">${esc(r.why)}</div>`}</td>
+      <td>${r.feasible ? roomsText(r) : ""}</td>
+      <td>${r.feasible ? r.penalty : ""}</td>
+      <td>${r.feasible ? `<b>${r.score}</b>
+            <div class="scorebar" title="${r.day_cost} days + ${r.room_cost} rooms + ${r.penalty} penalty">
+              <i class="d" style="width:${100 * r.day_cost / maxScore}%"></i><i class="r" style="width:${100 * r.room_cost / maxScore}%"></i><i class="p" style="width:${100 * r.penalty / maxScore}%"></i>
+            </div>` : ""}</td>
+      <td>${r === S.best ? '<span class="pill ok">best</span>' : ""}</td>
+    </tr>`).join("");
+  $("resultscard").classList.remove("hidden");
+  if (S.best) {
+    const b = S.best;
+    const rooms = b.by_size.filter(s => s.needed > 0)
+      .map(s => `${s.needed} room${s.needed > 1 ? "s" : ""} of ${s.rows}&times;${s.cols}`).join(", ");
+    $("best").innerHTML = `<b>${b.days} exam days &times; ${b.slots} slot${b.slots > 1 ? "s" : ""} a day</b>
+      (${b.sessions} sessions), needing <b>${rooms}</b>.<br>
+      Score <b>${b.score}</b> = ${b.days} days &times; ${+$("wday").value} + ${b.rooms_needed} rooms &times; ${+$("wroom").value}
+      + ${b.penalty} soft penalty. Busiest session: ${b.peak_load} of ${b.limit} allowed seats.`;
+    $("bestcard").classList.remove("hidden");
+  }
+}
+
+$("go").onclick = async () => {
+  const opts = options();
+  if (!opts.length) { $("status").className = "status error"; $("status").textContent = "Nothing to try: tick at least one slots-per-day row."; return; }
+  if (!readPool().length) { $("status").className = "status error"; $("status").textContent = "The room pool is empty."; return; }
+  S.results = []; S.stop = false; S.best = null;
+  $("bestcard").classList.add("hidden"); $("applied").classList.add("hidden");
+  $("go").disabled = true; $("stop").classList.remove("hidden");
+  const t0 = Date.now();
+  for (let i = 0; i < opts.length && !S.stop; i++) {
+    const o = opts[i];
+    $("status").className = "status busy";
+    $("status").innerHTML = `Trying <b>${o.days} days &times; ${o.k} slot${o.k > 1 ? "s" : ""}</b> &hellip; (${i + 1} of ${opts.length})`;
+    const r = await fetch("/api/plan/option", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                 body: JSON.stringify(body(o)) });
+    const d = await r.json();
+    if (!r.ok) { $("status").className = "status error"; $("status").textContent = d.message; break; }
+    d._opt = o;
+    S.results.push(d);
+    renderResults();
+  }
+  const n = S.results.length, ok = S.results.filter(r => r.feasible).length;
+  if (n) {
+    $("status").className = "status " + (ok ? "ok" : "error");
+    $("status").innerHTML = `${S.stop ? "Stopped. " : ""}Tried ${n} option(s) in ${((Date.now() - t0) / 1000).toFixed(1)} s: ` +
+      `${ok} feasible.` + (ok ? "" : " Try more days, more slots a day, or more rooms.");
+  }
+  $("go").disabled = false; $("stop").classList.add("hidden");
+};
+$("stop").onclick = () => { S.stop = true; };
+$("addroom").onclick = () => { poolRow({ rows: 10, cols: 10, count: 2 }); updateCount(); };
+
+$("apply").onclick = async () => {
+  const b = S.best;
+  $("apply").disabled = true;
+  const r = await fetch("/api/plan/apply", { method: "POST", headers: { "Content-Type": "application/json" },
+                                             body: JSON.stringify(body(b._opt)) });
+  const el = $("applied");
+  el.className = "msg " + (r.ok ? "ok" : "error");
+  el.innerHTML = r.ok
+    ? `Done: the app now uses ${b.days} days &times; ${b.slots} slots and this room pool. ` +
+      `<a href="/data?tab=timetable">See the timetable</a> or <a href="/">seat the sessions</a>.`
+    : esc((await r.json()).message);
+  $("apply").disabled = false;
+};
+
+setup();
+</script>
+</body>
+</html>

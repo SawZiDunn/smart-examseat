@@ -121,6 +121,26 @@ with their exams, and the rooms.
     repeats steps 5-8 for all 20 sessions, so every subject is seated in its
     own session. It shows a year x major table of exams seated per cohort; a
     cohort is finished when all of its exams are seated.
+
+**Changing the rules**
+
+11. **Add, remove or change constraints.** The *Constraints* page lists every
+    rule as a Prolog fact (`active(Id, Constraint, hard | soft(Weight))`).
+    Pick one from the catalogue, type a term such as `column_gap(1)`, or
+    write your own rule in Prolog (`violation(W) :- ...`). *Run* rebuilds the
+    timetable, seats every session, re-checks every hard rule and scores the
+    soft ones; *Which constraint is to blame?* explains a plan that is not
+    feasible. Examples: [`CONSTRAINTS.md`](CONSTRAINTS.md). Section 4.7 has the details.
+
+**Finding the resources**
+
+12. **How many days, slots and rooms are needed?** The *Planner* page keeps
+    the students and subjects and varies the resources: a range of exam days,
+    1-3 slots a day, and a pool of rooms of mixed sizes. Every combination is
+    timetabled and seated for real under the active constraints, and scored
+    as `days x day cost + rooms needed x room cost + soft penalty`. The page
+    recommends the lowest score, and *Use this option* makes it the loaded
+    setup. Section 4.8 has the details.
 ```
 
 ---
@@ -182,7 +202,11 @@ swipl main.pl
 | `timetable.pl` | `build_timetable/2` - the exam timetabling CSP (subject -> session) |
 | `data.pl` | generated facts, including the timetable as `exam/2` |
 | `data_sample.pl` | 20 students, 2 exams, 2 rooms - used by the tests and for demos |
-| `rules.pl` | constants (`min_separation/1`, `max_retries/1`) and shared derived rules |
+| `constraints.pl` | the constraint knowledge base: `active/3` facts, the catalogue, the checks for one seat, a plan or a timetable |
+| `custom_rules.pl` | constraints written in Prolog: safe compilation, the vocabulary they may use |
+| `CONSTRAINTS.md` | every constraint you can add, and examples of your own rules |
+| `planner.pl` | tries an exam period (days x slots) with a room pool, scores it, restores the loaded setup |
+| `rules.pl` | shared derived rules (`min_separation/1` now comes from the active constraints), `max_retries/1` |
 | `allocation.pl` | `students_in_session/3`, `allocate_rooms/3`, `reallocate/4`, UI helpers |
 | `validator.pl` | `validate_seating/4` - independent re-check of a finished plan |
 | `solver.pl` | `solve_room/4` - the backtracking seat CSP for one room |
@@ -192,10 +216,10 @@ swipl main.pl
 | `export.py` | CSV and PDF generation |
 | `templates/`, `static/` | the web front end |
 | `demo.pl` | console demonstration |
-| `tests/test_prolog.pl` | 80 plunit tests |
+| `tests/test_prolog.pl` | 101 plunit tests |
 | `tests/scenarios/` | tiny edge-case datasets for seating and timetabling |
 | `TESTING.md` | every way to test the system, and how to change the dataset size |
-| `tests/test_pipeline.py` | 70 Python tests (bridge, UI, data page, config import, exports, capacity) |
+| `tests/test_pipeline.py` | 81 Python tests (bridge, UI, data page, config import, constraints, planner, exports, capacity) |
 
 The facts and predicates each part relies on are listed in
 [section 8](#8-interface-reference).
@@ -207,7 +231,9 @@ The facts and predicates each part relies on are listed in
 The system solves **two CSPs in sequence**, both by backtracking search in
 Prolog: first *which session* each subject is examined in (timetabling,
 section 4.6, once per term), then *which seat* each student gets (seating,
-sections 4.1-4.4, once per session).
+sections 4.1-4.4, once per session). Their constraints are not hard-wired:
+they are facts in a knowledge base that can be changed while the app runs
+(section 4.7).
 
 ### 4.1 The seat CSP
 
@@ -215,7 +241,8 @@ Per room:
 
 * **Variables** - the students allocated to that room
 * **Domains** - the seats of that room
-* **Constraints** (all hard):
+* **Constraints**: the always-on core below, plus whatever is active in the
+  constraint knowledge base (section 4.7). The default set is shown here.
 
 | Rule | Meaning |
 |---|---|
@@ -323,9 +350,106 @@ a bounded inference budget.
 | then the emptiest session | least-constraining value: keeps room for the subjects still to come |
 | lower-bound precheck | `too_few_sessions(Need, Have)` is proven without search: Need = max(subjects per student, ceil(exam seats / session capacity), ceil(accessible exam seats / accessible seats)) |
 
-Failure reasons: `too_few_sessions(Need, Have)`, `subject_too_large(Subject,
-Size, Max)`, `no_sessions`, `no_timetable(Sessions)`. The generator prints
-these as plain sentences and refuses to write `data.pl`.
+Failure reasons: `too_few_sessions(Need, Have)`, `too_few_days(Need, Have)`,
+`subject_too_large(Subject, Size, Max)`, `fixed_blocked(Subject, Session)`,
+`no_sessions`, `no_timetable(Sessions)`. The generator prints these as plain
+sentences and refuses to write `data.pl`.
+
+The rules above are the **default** constraint set. With other constraints
+active, `candidates/6` also drops blocked sessions (`no_exam_on`,
+`no_exam_at`), keeps a pinned subject in its session (`fixed_session`), and
+checks the per-student day rules for every student of the subject
+(`max_exams_per_day(K)`, `no_back_to_back`). Hard ones remove a session,
+soft ones add weight x students to its cost.
+
+### 4.7 Constraints as data
+
+Every optional rule is a fact in `constraints.pl`:
+
+```prolog
+active(1, separation(1),        hard).
+active(2, accessible_seats,     hard).
+active(3, session_fill(80),     hard).
+active(4, max_exams_per_day(1), soft(10)).
+```
+
+Adding a constraint is `assertz`, removing it is `retract`; nothing is
+recompiled. The solvers ask the knowledge base which rules are active, so
+the **same search code** obeys whatever is there:
+
+| | Hard | Soft (weight W) |
+|---|---|---|
+| seat solver | checked right after a seat is chosen; failure backtracks | the seats are tried cheapest-first (penalty = W x conflicts) |
+| timetabler | removes the session from the subject's domain | the sessions are tried cheapest-first |
+| validator | re-checked on the finished plan | counted: penalty = W x violations |
+
+**Rules written in Prolog.** A custom constraint is a clause
+`violation(W) :- Body` (examples in [`CONSTRAINTS.md`](CONSTRAINTS.md)).
+`custom_rules.pl` parses it, refuses any predicate outside a small
+vocabulary (`seated/5`, `next_to/2`, `exam_session/2`, `major/2`, ...,
+arithmetic and comparisons), and compiles it as `rule(Id, W) :- Body`.
+During the search the partial plan sits in a backtrackable global variable
+(`b_setval/2`), so after each placement `\+ rule(Id, _)` prunes exactly like
+a built-in constraint. When the search backtracks, the variable is undone
+with it.
+
+**Evaluation.** `evaluate/1` rebuilds the timetable, seats every session,
+re-checks every hard rule independently, and reports feasibility, the soft
+penalty (sum of weight x violations, with examples), and the rooms of each
+size needed at the busiest session.
+
+**Explanation.** When a plan is not feasible, `why_infeasible/1` retracts
+each hard constraint in turn, evaluates again, and puts it back. The
+constraints whose removal makes the plan feasible are the ones to blame. For
+example, "year 1 not in the front row" conflicts with `accessible_seats`,
+because the accessible seats are in the front row.
+
+**Proofs without search.** Lower bounds reject impossible rule sets before
+any search: with `max_exams_per_day(1)` hard and 5 exams per student, fewer
+than 5 exam days is `too_few_days(5, Have)` immediately.
+
+### 4.8 The planner: searching over resources
+
+The two CSPs answer "is there a plan with *these* days and rooms?". The
+planner asks the question one level up: **which days, slots and rooms?**
+It is generate-and-test over configurations, with the CSPs as the test:
+
+```prolog
+plan_option(option(Days, Slots, Start, Pool), weights(DayCost, RoomCost), Result) :-
+    save_setup(Saved),
+    setup_call_cleanup(install_option(Option),      % new session/room/seat facts
+                       evaluate(Report),            % timetable + seating + checks
+                       restore_setup(Saved)),       % put the loaded facts back
+    ...  Score is Days * DayCost + RoomsNeeded * RoomCost + Penalty.
+```
+
+* **Generate**: the Planner page lists every (days, slots per day) in the
+  chosen ranges; the room pool (e.g. 4 halls of 12x12, 6 rooms of 10x10)
+  is offered in full.
+* **Test**: `evaluate/1` under the active constraints. Hopeless options
+  stop at the timetabler's lower bounds without searching (too few sessions,
+  too few days); the rest are seated for real.
+* **Measure**: *rooms needed* is, for each room size, the most rooms of
+  that size open in any one session. The allocator opens the largest rooms
+  first, so small rooms appear only when the big ones run out.
+* **Rank**: lower score is better; the cost weights decide the trade-off
+  (expensive days favour a short period with more rooms, expensive rooms the
+  opposite, and soft constraints such as one exam a day push towards more
+  days).
+
+On the default students with a pool of 4x(12x12), 6x(10x10) and 6x(9x9)
+rooms, 2 slots a day, day cost 100 and room cost 50:
+
+| Days | Rooms needed | Score |
+|---|---|---|
+| 6 | 12 (4 x 12x12, 6 x 10x10, 2 x 9x9) | 1,200 |
+| **7** | **9 (4 x 12x12, 5 x 10x10)** | **1,150 (best)** |
+| 8 | 8 | 1,200 |
+| 10 | 6 | 1,300 |
+| 12 | 6 | 1,500 |
+
+Each option is a full timetable and seating run, about 20 s on this data;
+the page sends the options one at a time so the table fills in as it goes.
 
 ---
 
@@ -360,15 +484,23 @@ make test
 For every way to test (console, UI checklist, edge-case datasets, changing
 the dataset size) see [`TESTING.md`](TESTING.md).
 
-* `tests/test_prolog.pl` - 80 plunit tests: dataset integrity, filters,
+* `tests/test_prolog.pl` - 101 plunit tests: dataset integrity, filters,
   allocation invariants, solver success and each of its four failure
   reasons, nine *injected* violations the validator must catch, the
   edge-case datasets in `tests/scenarios/`, the timetabler (clash-free,
-  within capacity, and each failure reason), and the whole-term run.
-* `tests/test_pipeline.py` - 70 tests: the Prolog-term parser, the bridge
+  within capacity, and each failure reason), the whole-term run, and the
+  constraint knowledge base (each built-in constraint changes the plan as it
+  should, the validator checks added constraints, custom Prolog rules prune
+  the search, unsafe rules are refused, soft penalties, and the
+  "which constraint is to blame" analysis), and the planner (weekdays, an
+  option is scored and the setup restored, a too-small pool is refused,
+  unused rooms are not counted, applying an option).
+* `tests/test_pipeline.py` - 81 tests: the Prolog-term parser, the bridge
   (both the raw `ok(...)`/`failed(...)` route and the JSON route), every
   session solving and validating, CSV/PDF output, every HTTP endpoint, the
-  capacity check, the whole-term endpoint, and config parsing.
+  capacity check, the whole-term endpoint, config parsing and import, and
+  the constraints API (add, change, remove, custom rules, run, blame), and
+  the planner API (setup, scored option, infeasible option, bad input, apply).
 
 ---
 
@@ -466,9 +598,12 @@ Validator rules: `one_seat_per_student`, `seat_unique`, `room_capacity`,
 ### 8.5 Constants (`rules.pl`)
 
 ```prolog
-min_separation(1).   % same-exam students in one row need >= 1 empty seat between them
+min_separation(N) :- constraints:hard_separation(N).  % from the active separation(N), 0 if none
 max_retries(3).      % reallocations that only reshuffle, before another room is opened
 ```
+
+The constraint catalogue, the default set and the vocabulary for custom rules
+are in `constraints.pl` and `custom_rules.pl`; `CONSTRAINTS.md` lists them all.
 
 ### 8.6 Calling it from Python
 
@@ -491,13 +626,14 @@ faster.
 
 ## 9. Known limits
 
-* Seating enforces hard constraints only. Keeping a cohort in one room is a
-  heuristic of the allocator, not a constraint, and invigilator workload is
-  not modelled. Packing rooms tightly for cohort fit costs speed: most
-  sessions need several allocation retries before every room solves. The
-  timetabler has two soft preferences (one exam per day per student, even
-  load) expressed through value ordering.
-* `min_separation(1)` applies inside a row only. Diagonal and front-to-back neighbours are unconstrained.
+* Soft constraints guide the search through value ordering (cheapest seat
+  or session first); the search does not look for the plan with the lowest
+  penalty. Soft *custom* rules are scored but do not guide the search.
+  Keeping a cohort in one room is a heuristic of the allocator (and the
+  soft `cohort_together` constraint measures it). Invigilator workload is
+  not modelled.
+* With the defaults, separation applies inside a row only; `column_gap(N)`
+  and `no_diagonal` add front-to-back and diagonal separation.
 * The seating retry loop reshuffles rooms but never changes the timetable.
   The timetabler keeps each session within capacity, and the UI refuses a
   selection larger than the open rooms; if rooms are closed after the

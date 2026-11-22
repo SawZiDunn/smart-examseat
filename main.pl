@@ -31,6 +31,9 @@
 :- use_module(solver).
 :- use_module(validator).
 :- use_module(timetable).
+:- use_module(constraints).
+:- use_module(custom_rules, [vocabulary/3]).
+:- use_module(planner).
 
 :- initialization(load_dataset).
 
@@ -518,3 +521,310 @@ print_cells(First, Cells) :-
     forall(member(C, Cells),
            ( format(atom(P), "~w~t~12|", [C]), write(P) )),
     nl.
+
+
+% ===========================================================================
+% Constraints as data: evaluate the whole term under the active constraints
+% ===========================================================================
+
+%! evaluate(-Report) is det.
+%
+%  1. rebuild the timetable with the active constraints (constraints.pl)
+%     and install it as the exam/2 facts,
+%  2. seat every session,
+%  3. re-check every hard rule independently (validator + timetable rules),
+%  4. score the soft rules: penalty = weight x number of violations.
+%
+%  Report = report(Feasible, Problems, TimetableStats, Sessions, Rooms,
+%                  Soft, Score, Millis)
+evaluate(Report) :-
+    get_time(T0),
+    build_timetable([], TT),
+    (   TT = failed(Reason)
+    ->  explain_timetable_failure(Reason, Why),
+        Problems = [problem(timetable, Reason, Why)],
+        TTStats = none, Sessions = [], Rooms = rooms(0, 0, []),
+        Soft = [], Score = 0
+    ;   TT = ok(Timetable, TTStats),
+        install_timetable(Timetable),
+        list_sessions(SessionIds),
+        findall(Sess, ( member(S, SessionIds), evaluate_session(S, Sess) ), Sessions),
+        session_problems(Sessions, SessionProblems),
+        timetable_problems(TimetableProblems),
+        append(SessionProblems, TimetableProblems, Problems),
+        room_usage(Sessions, Rooms),
+        soft_scores(Sessions, Soft),
+        aggregate_all(sum(P), member(soft(_, _, _, _, P, _), Soft), Score)
+    ),
+    ( Problems == [] -> Feasible = true ; Feasible = false ),
+    get_time(T1),
+    Millis is round((T1 - T0) * 1000),
+    Report = report(Feasible, Problems, TTStats, Sessions, Rooms, Soft, Score, Millis),
+    !.
+
+%! install_timetable(+Timetable) is det.
+%  Timetable = [Subject-Session, ...] replaces the exam/2 facts.
+install_timetable(Timetable) :-
+    retractall(user:exam(_, _)),
+    forall(member(C-S, Timetable), assertz(user:exam(C, S))),
+    allocation:forget_allocations.
+
+evaluate_session(S, sess(S, Status, N, RoomsUsed, Retries, Ms, As)) :-
+    generate_seating(S, filters([], []), Result, stats(N, _, Retries, Ms)),
+    (   Result = ok(As)
+    ->  validate_seating(S, filters([], []), As, Report),
+        ( Report == valid -> Status = ok ; Status = Report ),
+        findall(R, member(assign(_, _, R, _, _), As), Rs0), sort(Rs0, RoomsUsed)
+    ;   Result = failed(Reason), Status = failed(Reason), As = [], RoomsUsed = []
+    ).
+
+session_problems(Sessions, Problems) :-
+    findall(problem(session(S), Status, Why),
+            ( member(sess(S, Status, _, _, _, _, _), Sessions),
+              Status \== ok,
+              status_text(Status, Why) ),
+            Problems).
+
+status_text(failed(Reason), Why) :- !,
+    format(atom(Why), 'no seating found: ~q', [Reason]).
+status_text(invalid(Vs), Why) :-
+    findall(T, ( member(V, Vs), explain_violation(V, T) ), Ts0),
+    length(Ts0, N),
+    ( length(Ts, 3), append(Ts, _, Ts0) -> true ; Ts = Ts0 ),
+    atomic_list_concat(Ts, '; ', Joined),
+    format(atom(Why), '~d violation(s): ~w', [N, Joined]).
+
+% The timetabler enforces the hard timetable rules; check them again on the
+% installed timetable, independently of how it was built.
+timetable_problems(Problems) :-
+    findall(problem(timetable, C, Why),
+            ( active(_, C, hard),
+              constraint_level(C, Level), memberchk(Level, [timetable]),
+              timetable_violations(C, Ws), Ws = [W | _],
+              length(Ws, N),
+              explain_witness(C, W, First),
+              format(atom(Why), '~q broken ~d time(s), e.g. ~w', [C, N, First]) ),
+            Problems0),
+    findall(problem(timetable, exam_clash, Why),
+            ( exam_clash(St, S), format(atom(Why), '~w has two exams in ~w', [St, S]) ),
+            Clashes),
+    append(Problems0, Clashes, Problems).
+
+%! room_usage(+Sessions, -Rooms) is det.
+%  Rooms = rooms(PeakRooms, DistinctRooms, BySize)
+%  BySize = [size(Rows, Cols, Seats, MostAtOnce, Available), ...]: for each
+%  room size, the most rooms of that size open in any one session - the
+%  rooms this exam period actually needs.
+room_usage(Sessions, rooms(Peak, Distinct, BySize)) :-
+    findall(L, ( member(sess(_, _, _, Rs, _, _, _), Sessions), length(Rs, L) ), Ls),
+    max_list([0 | Ls], Peak),
+    findall(R, ( member(sess(_, _, _, Rs, _, _, _), Sessions), member(R, Rs) ), All0),
+    sort(All0, All), length(All, Distinct),
+    findall(Rows-Cols, user:room(_, Rows, Cols, _), Sizes0), sort(Sizes0, Sizes),
+    findall(size(Rows, Cols, Seats, Most, Avail),
+            ( member(Rows-Cols, Sizes),
+              Seats is Rows * Cols,
+              findall(K, ( member(sess(_, _, _, Rs, _, _, _), Sessions),
+                           aggregate_all(count, ( member(R, Rs),
+                                                  user:room(R, Rows, Cols, _) ), K) ),
+                      Ks),
+              max_list([0 | Ks], Most),
+              aggregate_all(count, ( user:room(R, Rows, Cols, _),
+                                     rules:available_room(R, _, _) ), Avail) ),
+            BySize).
+
+%! soft_scores(+Sessions, -Soft) is det.
+%  Soft = [soft(Id, Constraint, Weight, Units, Penalty, Examples), ...]
+soft_scores(Sessions, Soft) :-
+    findall(soft(Id, C, W, Units, Penalty, Examples),
+            ( active(Id, C, soft(W)),
+              soft_witnesses(C, Sessions, Ws),
+              aggregate_all(sum(U), ( member(Wt, Ws), units(C, Wt, U) ), Units),
+              Penalty is W * Units,
+              ( length(Ex, 3), append(Ex, _, Ws) -> true ; Ex = Ws ),
+              findall(T, ( member(Wt, Ex), explain_witness(C, Wt, T) ), Examples) ),
+            Soft).
+
+soft_witnesses(C, Sessions, Ws) :-
+    constraint_level(C, Level),
+    (   Level == timetable
+    ->  timetable_violations(C, Ws)
+    ;   findall(W, ( member(sess(_, _, _, _, _, _, As), Sessions),
+                     seat_violations(C, As, SWs), member(W, SWs) ), Ws)
+    ).
+
+%  How many violations a witness counts for.
+units(max_exams_per_day(K), too_many(_, _, N), U) :- !, U is N - K.
+units(cohort_together, split(_, Rooms), U) :- !, length(Rooms, L), U is L - 1.
+units(_, _, 1).
+
+
+% ---------------------------------------------------------------------------
+% "Why is it impossible?" - relax one hard constraint at a time
+% ---------------------------------------------------------------------------
+
+%! why_infeasible(-Findings) is det.
+%  For every active hard constraint: would the term be feasible without it?
+%  Findings = [relax(Id, Constraint, Feasible, Score), ...]
+%  The constraint set and the timetable are restored afterwards.
+why_infeasible(Findings) :-
+    findall(C-S, user:exam(C, S), Saved),
+    findall(relax(Id, C, Feasible, Score),
+            ( active(Id, C, hard),
+              setup_call_cleanup(
+                  retract(active(Id, C, hard)),
+                  ( evaluate(report(Feasible, _, _, _, _, _, Score, _)) ),
+                  assertz(active(Id, C, hard))) ),
+            Findings),
+    install_timetable(Saved).
+
+
+% ---------------------------------------------------------------------------
+% JSON for the UI
+% ---------------------------------------------------------------------------
+
+%! constraints_json(-Json) is det.
+constraints_json(Json) :-
+    findall(_{ id: Id, term: T, name: Name, level: Level, strength: Kind,
+               weight: W, text: Text, rule: Rule },
+            ( active(Id, C, Strength),
+              term_text(C, T),
+              constraint_name(C, Name),
+              constraint_level(C, Level),
+              strength_parts(Strength, Kind, W),
+              describe(C, Text),
+              ( C = custom(_, _, R0) -> atom_string(R0, Rule) ; Rule = "" ) ),
+            Active0),
+    sort(id, @<, Active0, Active),
+    findall(_{ name: N, text: Text }, core_rule(N, Text), Core),
+    findall(_{ name: N, template: TT, level: L, params: Ps, strengths: Ss, text: Text },
+            ( catalog_entry(N, T, L, Params, Ss, Text),
+              template_text(T, Params, TT),
+              findall(_{ name: PN, type: PT }, member(PN:PT, Params), Ps) ),
+            Catalog),
+    findall(_{ level: L, head: H, text: Text },
+            ( vocabulary(L, Head, Text), term_text(Head, H) ),
+            Vocab),
+    atom_json_dict(Json,
+        _{ active: Active, core: Core, catalog: Catalog, vocabulary: Vocab },
+        [as(atom)]).
+
+constraint_name(custom(_, Name, _), Name) :- !.
+constraint_name(C, Name) :- functor(C, Name, _).
+
+strength_parts(hard, hard, 0).
+strength_parts(soft(W), soft, W).
+
+term_text(T, Text) :- format(atom(Text), '~q', [T]).
+
+template_text(T, Params, Text) :-
+    T =.. [N | _],
+    (   Params == []
+    ->  Text = N
+    ;   findall(P, member(P:_, Params), Names),
+        atomic_list_concat(Names, ', ', Args),
+        format(atom(Text), '~w(~w)', [N, Args])
+    ).
+
+%! add_constraint_json(+Text, +Strength, -Json) is det.
+%  Text is a constraint term as typed in the UI, e.g. 'column_gap(1)'.
+add_constraint_json(Text, Strength, Json) :-
+    catch(( term_string(C, Text),
+            (   ground(C) -> true
+            ;   throw(error(constraint('Fill in every parameter, e.g. separation(2).'), _))
+            ),
+            add_constraint(C, Strength, Id),
+            Out = _{ ok: true, id: Id } ),
+          E, error_json(E, Out)),
+    atom_json_dict(Json, Out, [as(atom)]).
+
+%! add_custom_json(+Level, +Name, +RuleText, +Strength, -Json) is det.
+add_custom_json(Level, Name, RuleText, Strength, Json) :-
+    catch(( add_constraint(custom(Level, Name, RuleText), Strength, Id),
+            Out = _{ ok: true, id: Id } ),
+          E, error_json(E, Out)),
+    atom_json_dict(Json, Out, [as(atom)]).
+
+error_json(error(constraint(Msg), _), _{ ok: false, message: Msg }) :- !.
+error_json(error(syntax_error(S), _), _{ ok: false, message: M }) :- !,
+    format(atom(M), 'Not a valid Prolog term (~w).', [S]).
+error_json(E, _{ ok: false, message: M }) :-
+    message_to_codes(E, M).
+
+message_to_codes(E, M) :-
+    catch(message_to_codes(E, _, Codes), _, fail), !,
+    atom_codes(M, Codes).
+message_to_codes(E, M) :-
+    format(atom(M), '~q', [E]).
+
+%! evaluate_json(-Json) is det.
+evaluate_json(Json) :-
+    evaluate(Report),
+    eval_report_dict(Report, Dict),
+    atom_json_dict(Json, Dict, [as(atom)]).
+
+eval_report_dict(report(Feasible, Problems, TTStats, Sessions, rooms(Peak, Distinct, BySize),
+                   Soft, Score, Millis), Dict) :-
+    findall(_{ where: Where, text: Why },
+            ( member(problem(W0, _, Why), Problems), term_text(W0, Where) ),
+            ProblemDicts),
+    (   TTStats = stats(SameDay, PeakLoad, Limit, NSlots)
+    ->  TT = _{ same_day_pairs: SameDay, peak: PeakLoad, limit: Limit, sessions: NSlots }
+    ;   TT = null
+    ),
+    findall(_{ session: S, date: D, start: St, status: StatusText, ok: Ok,
+               students: N, rooms: NR, retries: Re, millis: Ms },
+            ( member(sess(S, Status, N, Rs, Re, Ms, _), Sessions),
+              session_info(S, D, St, _),
+              length(Rs, NR),
+              ( Status == ok -> Ok = true, StatusText = ok
+              ; Ok = false, status_text(Status, StatusText) ) ),
+            SessionDicts),
+    findall(_{ rows: R, cols: C, seats: Seats, needed: Most, available: Avail },
+            member(size(R, C, Seats, Most, Avail), BySize),
+            SizeDicts),
+    findall(_{ id: Id, term: T, weight: W, count: U, penalty: P, examples: Ex,
+               text: Text },
+            ( member(soft(Id, C, W, U, P, Ex), Soft),
+              term_text(C, T), describe(C, Text) ),
+            SoftDicts),
+    Dict = _{ feasible: Feasible, problems: ProblemDicts, timetable: TT,
+              sessions: SessionDicts,
+              rooms: _{ peak: Peak, distinct: Distinct, by_size: SizeDicts },
+              soft: SoftDicts, score: Score, millis: Millis }.
+
+%! plan_option_json(+Option, +Weights, -Json) is det.
+%  One planner option (planner.pl), as JSON for the Planner page.
+plan_option_json(Option, Weights, Json) :-
+    plan_option(Option, Weights,
+                result(Feasible, Why, RoomsNeeded, BySize, Penalty, Score, Report)),
+    Option = option(Days, Slots, _, _),
+    Weights = weights(DayCost, RoomCost),
+    length(Slots, NSlots),
+    Report = report(_, _, TT, _, rooms(Peak, _, _), Soft, _, Millis),
+    (   TT = stats(_, PeakLoad, Limit, NSessions)
+    ->  true
+    ;   PeakLoad = 0, Limit = 0, NSessions is Days * NSlots
+    ),
+    findall(_{ rows: R, cols: C, seats: S, needed: N, available: A },
+            member(size(R, C, S, N, A), BySize), Sizes),
+    findall(_{ term: T, penalty: P },
+            ( member(soft(_, Con, _, _, P, _), Soft), term_text(Con, T) ), SoftDicts),
+    ( Score == none -> ScoreOut = null ; ScoreOut = Score ),
+    DayPart is Days * DayCost,
+    RoomPart is RoomsNeeded * RoomCost,
+    atom_json_dict(Json,
+        _{ days: Days, slots: NSlots, sessions: NSessions, feasible: Feasible,
+           why: Why, rooms_needed: RoomsNeeded, rooms_peak: Peak, by_size: Sizes,
+           penalty: Penalty, soft: SoftDicts, day_cost: DayPart, room_cost: RoomPart,
+           score: ScoreOut, peak_load: PeakLoad, limit: Limit, millis: Millis },
+        [as(atom)]).
+
+%! why_infeasible_json(-Json) is det.
+why_infeasible_json(Json) :-
+    why_infeasible(Findings),
+    findall(_{ id: Id, term: T, text: Text, feasible: F, score: S },
+            ( member(relax(Id, C, F, S), Findings),
+              term_text(C, T), describe(C, Text) ),
+            Dicts),
+    atom_json_dict(Json, _{ relaxations: Dicts }, [as(atom)]).

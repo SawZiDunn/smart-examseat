@@ -259,6 +259,14 @@ def filters_term(years, majors) -> str:
     return f"filters({year_list},{major_list})"
 
 
+def _text(value) -> str:
+    """Any text as a quoted Prolog atom, safe to put inside a query string
+    (quotes, backslashes and newlines escaped)."""
+    text = str(value)
+    return "'" + (text.replace("\\", "\\\\").replace("'", "\\'")
+                  .replace("\n", "\\n").replace("\r", "").replace("\t", " ")) + "'"
+
+
 def _atom(value) -> str:
     text = str(value)
     if text and text[0].islower() and all(c.isalnum() or c == "_" for c in text):
@@ -328,6 +336,70 @@ class SeatingEngine:
     def catalogue(self) -> dict:
         """Sessions, majors, years, rooms and a dataset summary for the UI."""
         return self._json("catalogue_json(J)", "J")
+
+    # -- constraints (constraints.pl) ----------------------------------------
+
+    def constraints(self) -> dict:
+        """Active constraints, the core rules, the catalogue, the vocabulary."""
+        return self._json("constraints_json(J)", "J")
+
+    @staticmethod
+    def _strength(strength: str, weight) -> str:
+        if strength == "hard":
+            return "hard"
+        w = int(weight or 1)
+        if w < 1:
+            raise ValueError("weight must be at least 1")
+        return f"soft({w})"
+
+    def add_constraint(self, term: str, strength: str = "hard", weight=1) -> dict:
+        """term is the constraint as typed, e.g. 'column_gap(1)'."""
+        s = self._strength(strength, weight)
+        return self._json(f"add_constraint_json({_text(term)}, {s}, J)", "J")
+
+    def add_custom_rule(self, level: str, name: str, rule: str,
+                        strength: str = "hard", weight=1) -> dict:
+        if level not in ("seat", "timetable"):
+            raise ValueError("level must be seat or timetable")
+        s = self._strength(strength, weight)
+        return self._json(f"add_custom_json({level}, {_text(name)}, "
+                          f"{_text(rule)}, {s}, J)", "J")
+
+    def remove_constraint(self, cid: int) -> None:
+        self._one(f"remove_constraint({int(cid)})")
+
+    def set_strength(self, cid: int, strength: str, weight=1) -> None:
+        self._one(f"set_strength({int(cid)}, {self._strength(strength, weight)})")
+
+    def reset_constraints(self) -> None:
+        self._one("reset_constraints")
+
+    def evaluate(self) -> dict:
+        """Rebuild the timetable under the active constraints, seat every
+        session, check every hard rule and score the soft ones."""
+        return self._json("evaluate_json(J)", "J")
+
+    def why_infeasible(self) -> dict:
+        return self._json("why_infeasible_json(J)", "J")
+
+    # -- planner (planner.pl) ----------------------------------------------
+
+    @staticmethod
+    def _option_term(days: int, slots: list, start: str, pool: list) -> str:
+        """option(Days, [Start-End, ...], StartDate, [pool(R, C, N), ...])"""
+        slot_terms = ", ".join(f"{_text(a)}-{_text(b)}" for a, b in slots)
+        pool_terms = ", ".join(f"pool({int(r)}, {int(c)}, {int(n)})" for r, c, n in pool)
+        return f"option({int(days)}, [{slot_terms}], {_text(start)}, [{pool_terms}])"
+
+    def plan_option(self, days, slots, start, pool, day_cost, room_cost) -> dict:
+        """Evaluate one planner option; the loaded setup is restored after."""
+        term = self._option_term(days, slots, start, pool)
+        return self._json(f"plan_option_json({term}, "
+                          f"weights({int(day_cost)}, {int(room_cost)}), J)", "J")
+
+    def apply_option(self, days, slots, start, pool) -> None:
+        """Make the option the loaded setup, with a new timetable."""
+        self._one(f"apply_option({self._option_term(days, slots, start, pool)})")
 
     def dataset_contents(self) -> dict:
         """Everything in the loaded data file, for the data page."""

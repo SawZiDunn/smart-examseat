@@ -622,3 +622,175 @@ test(whole_term_finishes_every_cohort) :-
     aggregate_all(sum(T), member(cohort(_, _, _, T), Coverage), AllExams).
 
 :- end_tests(term).
+
+
+% ===========================================================================
+% Constraints as data (constraints.pl, custom_rules.pl)
+% ===========================================================================
+% Every test puts the default constraints and the data back, because
+% evaluate/1 replaces the timetable.
+
+fresh_sample :- reset_constraints, use_sample_data.
+fresh_full   :- reset_constraints, use_full_data.
+
+seat_sess1(As) :-
+    generate_seating(sess1, filters([], []), ok(As)),
+    validate_seating(sess1, filters([], []), As, valid).
+
+constraint_error(Goal) :-
+    catch(( Goal, fail ), error(constraint(_), _), true).
+
+:- begin_tests(constraints, [setup(fresh_sample), cleanup(fresh_sample)]).
+
+test(the_default_set, [setup(fresh_sample)]) :-
+    findall(C-S, active(_, C, S), Active),
+    Active == [separation(1)-hard, accessible_seats-hard,
+               session_fill(80)-hard, max_exams_per_day(1)-soft(10)].
+
+test(malformed_constraints_are_refused, [setup(fresh_sample)]) :-
+    constraint_error(add_constraint(foo(1), hard, _)),
+    constraint_error(add_constraint(separation(x), hard, _)),
+    constraint_error(add_constraint(room_fill(150), hard, _)),
+    constraint_error(add_constraint(room_closed(r999), hard, _)),
+    constraint_error(add_constraint(room_fill(80), soft(3), _)),
+    constraint_error(add_constraint(cohort_together, hard, _)).
+
+test(separation_two_keeps_wider_gaps, [setup(fresh_sample)]) :-
+    once(retract(constraints:active(_, separation(1), hard))),
+    add_constraint(separation(2), hard, _),
+    seat_sess1(As),
+    \+ ( member(assign(S1, E, R, Row, C1), As), member(assign(S2, E, R, Row, C2), As),
+         S1 @< S2, abs(C1 - C2) < 3 ).
+
+test(without_separation_same_exam_may_sit_together, [setup(fresh_sample)]) :-
+    once(retract(constraints:active(_, separation(1), hard))),
+    seat_sess1(As),
+    once(( member(assign(_, E, R, Row, C1), As), member(assign(_, E, R, Row, C2), As),
+           C2 =:= C1 + 1 )).
+
+test(column_gap_is_respected, [setup(fresh_sample)]) :-
+    add_constraint(column_gap(1), hard, _),
+    seat_sess1(As),
+    \+ ( member(assign(S1, E, R, R1, C), As), member(assign(S2, E, R, R2, C), As),
+         S1 @< S2, abs(R1 - R2) < 2 ).
+
+test(a_closed_room_is_never_used, [setup(fresh_sample)]) :-
+    add_constraint(room_closed(r102), hard, _),
+    generate_seating(sess1, filters([], []), Result),
+    ( Result = ok(As) -> \+ memberchk(assign(_, _, r102, _, _), As) ; true ).
+
+test(the_validator_checks_added_hard_constraints, [setup(fresh_sample)]) :-
+    seat_sess1(As),                         % made without column_gap
+    add_constraint(column_gap(1), hard, _),
+    validate_seating(sess1, filters([], []), As, invalid(Vs)),
+    memberchk(violation(column_gap(1), _), Vs).
+
+test(a_custom_hard_seat_rule_prunes_the_search, [setup(fresh_sample)]) :-
+    add_constraint(custom(seat, 'no same major side by side',
+        "violation(S1-S2) :- next_to(S1, S2), major(S1, M), major(S2, M), S1 @< S2."),
+        hard, _),
+    seat_sess1(As),
+    \+ ( member(assign(S1, _, R, Row, C1), As), member(assign(S2, _, R, Row, C2), As),
+         C2 =:= C1 + 1, user:student(S1, M, _, _), user:student(S2, M, _, _) ).
+
+test(unsafe_or_broken_custom_rules_are_refused, [setup(fresh_sample)]) :-
+    constraint_error(add_constraint(custom(seat, x, "violation(X) :- shell(ls), X = 1."), hard, _)),
+    constraint_error(add_constraint(custom(seat, x, "violation(X) :- ("), hard, _)),
+    constraint_error(add_constraint(custom(seat, x, "foo(1) :- true."), hard, _)),
+    constraint_error(add_constraint(custom(seat, x, "violation(X) :- X."), hard, _)),
+    \+ active(_, custom(_, _, _), _).
+
+test(evaluate_the_defaults, [setup(fresh_sample)]) :-
+    evaluate(report(true, [], stats(_, _, _, _), Sessions, rooms(Peak, _, _), _, 0, _)),
+    Sessions = [_ | _], Peak >= 1.
+
+test(soft_rules_add_weight_times_violations, [setup(fresh_sample)]) :-
+    add_constraint(custom(seat, 'front row', "violation(S) :- seated(S, _, _, 1, _)."),
+                   soft(2), Id),
+    evaluate(report(true, _, _, _, _, Soft, Score, _)),
+    memberchk(soft(Id, _, 2, N, P, _), Soft),
+    N > 0, P =:= 2 * N, Score >= P.
+
+test(why_infeasible_names_the_culprit, [setup(fresh_sample)]) :-
+    add_constraint(room_fill(30), hard, Id),
+    evaluate(report(false, [_ | _], _, _, _, _, _, _)),
+    why_infeasible(Findings),
+    memberchk(relax(Id, room_fill(30), true, _), Findings),
+    active(Id, room_fill(30), hard).        % put back afterwards
+
+:- end_tests(constraints).
+
+
+:- begin_tests(timetable_constraints, [setup(fresh_full), cleanup(fresh_full)]).
+
+first_date(D) :- list_sessions([S | _]), session_info(S, D, _, _).
+
+test(no_exam_on_empties_that_day, [setup(fresh_full)]) :-
+    first_date(D),
+    add_constraint(no_exam_on(D), hard, _),
+    build_timetable([], ok(T, _)),
+    \+ ( member(_-S, T), session_info(S, D, _, _) ).
+
+test(fixed_session_pins_a_subject, [setup(fresh_full)]) :-
+    add_constraint(fixed_session(se101, sess7), hard, _),
+    build_timetable([], ok(T, _)),
+    memberchk(se101-sess7, T).
+
+test(too_few_days_is_proven_without_search, [setup(fresh_full)]) :-
+    once(retract(constraints:active(_, max_exams_per_day(1), _))),
+    add_constraint(max_exams_per_day(1), hard, _),
+    list_sessions(Ss),
+    findall(D, ( member(S, Ss), session_info(S, D, _, _) ), Ds0), sort(Ds0, Ds),
+    length(Keep, 4), append(Keep, Blocked, Ds),
+    forall(member(D, Blocked), add_constraint(no_exam_on(D), hard, _)),
+    build_timetable([], failed(too_few_days(5, 4))).
+
+test(a_custom_timetable_rule_is_obeyed, [setup(fresh_full)]) :-
+    add_constraint(custom(timetable, 'no year 1 on Friday',
+        "violation(E) :- exam_session(E, S), exam_cohort(E, _, 1), session_weekday(S, fri)."),
+        hard, _),
+    build_timetable([], ok(T, _)),
+    \+ ( member(E-S, T), user:enrolled(St, E), user:student(St, _, 1, _),
+         custom_rules:session_weekday(S, fri) ).
+
+:- end_tests(timetable_constraints).
+
+
+% ===========================================================================
+% Planner (planner.pl): days x slots x room pool -> feasible?, rooms, score
+% ===========================================================================
+
+:- begin_tests(planner, [setup(fresh_sample), cleanup(fresh_sample)]).
+
+test(weekdays_skip_the_weekend) :-
+    weekdays('2026-12-03', 4, Ds),           % Thu, Fri, (Sat, Sun), Mon, Tue
+    Ds == ['2026-12-03', '2026-12-04', '2026-12-07', '2026-12-08'].
+
+test(an_option_is_scored_and_the_setup_restored, [setup(fresh_sample)]) :-
+    findall(F, ( user:session_time(A, B, C, D), F = s(A, B, C, D) ), Before),
+    findall(R, user:room(R, _, _, _), RoomsBefore),
+    plan_option(option(1, ['09:00'-'12:00'], '2026-12-01', [pool(4, 5, 1), pool(3, 5, 1)]),
+                weights(100, 50), result(true, '', Rooms, _, Penalty, Score, _)),
+    Score =:= 100 + Rooms * 50 + Penalty,
+    findall(F, ( user:session_time(A, B, C, D), F = s(A, B, C, D) ), After),
+    findall(R, user:room(R, _, _, _), RoomsAfter),
+    After == Before, RoomsAfter == RoomsBefore.
+
+test(too_small_a_pool_is_not_feasible, [setup(fresh_sample)]) :-
+    plan_option(option(1, ['09:00'-'12:00'], '2026-12-01', [pool(2, 2, 1)]),
+                weights(100, 50), result(false, Why, _, _, _, none, _)),
+    Why \== ''.
+
+test(more_rooms_than_needed_are_not_counted, [setup(fresh_sample)]) :-
+    plan_option(option(1, ['09:00'-'12:00'], '2026-12-01', [pool(4, 5, 6)]),
+                weights(0, 1), result(true, _, Rooms, _, _, _, _)),
+    Rooms < 6.
+
+test(applying_an_option_changes_the_setup, [setup(fresh_sample)]) :-
+    apply_option(option(2, ['09:00'-'12:00', '13:00'-'16:00'], '2026-12-01',
+                        [pool(5, 5, 2)])),
+    aggregate_all(count, user:session_time(_, _, _, _), 4),
+    aggregate_all(count, user:room(_, 5, 5, yes), 2),
+    forall(user:subject(C), user:exam(C, _)).
+
+:- end_tests(planner).

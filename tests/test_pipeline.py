@@ -466,6 +466,179 @@ class TestConfigImport(unittest.TestCase):
         self.assertEqual(self.client.post("/api/import").status_code, 400)
 
 
+class TestConstraintsApi(unittest.TestCase):
+    """The Constraints page: list, add, change, remove, run, blame.
+
+    Runs on the 20-student sample so evaluate is fast; data.pl and the
+    default constraints are put back after every test.
+    """
+
+    ROOT = os.path.dirname(CONFIG)
+
+    @classmethod
+    def setUpClass(cls):
+        import app as webapp
+        webapp.ENGINE = ENGINE
+        cls.webapp = webapp
+        cls.client = webapp.app.test_client()
+
+    def setUp(self):
+        ENGINE.load_dataset(os.path.join(self.ROOT, "data_sample.pl"), label="sample")
+        ENGINE.reset_constraints()
+
+    def tearDown(self):
+        ENGINE.reset_constraints()
+        ENGINE.load_dataset(os.path.join(self.ROOT, "data.pl"), label="data.pl")
+        self.webapp._CACHE.clear()
+        self.webapp._LAYOUTS.clear()
+
+    def add(self, **body):
+        return self.client.post("/api/constraints", json=body)
+
+    def active_terms(self):
+        return [a["term"] for a in self.client.get("/api/constraints").get_json()["active"]]
+
+    def test_page_and_listing(self):
+        self.assertEqual(self.client.get("/constraints").status_code, 200)
+        data = self.client.get("/api/constraints").get_json()
+        self.assertEqual([a["term"] for a in data["active"]],
+                         ["separation(1)", "accessible_seats", "session_fill(80)",
+                          "max_exams_per_day(1)"])
+        self.assertEqual(len(data["core"]), 6)
+        self.assertIn("column_gap", {c["name"] for c in data["catalog"]})
+        self.assertTrue(any(v["head"].startswith("next_to") for v in data["vocabulary"]))
+
+    def test_add_change_and_remove(self):
+        res = self.add(term="column_gap(1)", strength="soft", weight=4)
+        self.assertTrue(res.get_json()["ok"])
+        cid = res.get_json()["id"]
+        self.assertIn("column_gap(1)", self.active_terms())
+        self.assertEqual(self.client.patch(f"/api/constraints/{cid}",
+                                           json={"strength": "hard"}).status_code, 200)
+        row = next(a for a in self.client.get("/api/constraints").get_json()["active"]
+                   if a["id"] == cid)
+        self.assertEqual(row["strength"], "hard")
+        self.client.delete(f"/api/constraints/{cid}")
+        self.assertNotIn("column_gap(1)", self.active_terms())
+
+    def test_bad_constraints_come_back_as_messages(self):
+        for term in ("separation(x)", "foo(1)", "separation(", "separation(N)"):
+            res = self.add(term=term)
+            self.assertEqual(res.status_code, 400, term)
+            self.assertFalse(res.get_json()["ok"])
+            self.assertTrue(res.get_json()["message"])
+        self.assertEqual(self.add(term="room_fill(80)", strength="soft").status_code, 400)
+
+    def test_custom_rule_with_quotes_and_newlines(self):
+        rule = ("% neighbours from different years\n"
+                "violation(S1-S2) :-\n    next_to(S1, S2),\n"
+                "    year(S1, Y1), year(S2, Y2), Y1 =\\= Y2.")
+        res = self.add(custom={"level": "seat", "name": "it's mine", "rule": rule},
+                       strength="soft", weight=1)
+        self.assertTrue(res.get_json()["ok"], res.get_json())
+        unsafe = self.add(custom={"level": "seat", "name": "x",
+                                  "rule": "violation(X) :- shell('rm -rf /'), X = 1."})
+        self.assertEqual(unsafe.status_code, 400)
+        self.assertIn("not allowed", unsafe.get_json()["message"])
+
+    def test_run_reports_feasibility_score_and_rooms(self):
+        self.add(custom={"level": "seat", "name": "front row",
+                         "rule": "violation(S) :- seated(S, _, _, 1, _)."},
+                 strength="soft", weight=2)
+        report = self.client.post("/api/evaluate").get_json()
+        self.assertTrue(report["feasible"])
+        self.assertEqual(report["problems"], [])
+        soft = next(s for s in report["soft"] if "front row" in s["term"])
+        self.assertGreater(soft["count"], 0)
+        self.assertEqual(soft["penalty"], 2 * soft["count"])
+        self.assertGreaterEqual(report["rooms"]["peak"], 1)
+        self.assertTrue(all(s["ok"] for s in report["sessions"]))
+
+    def test_infeasible_run_and_blame(self):
+        self.add(term="room_fill(30)")
+        report = self.client.post("/api/evaluate").get_json()
+        self.assertFalse(report["feasible"])
+        self.assertTrue(report["problems"])
+        why = self.client.post("/api/why").get_json()["relaxations"]
+        fixes = [r["term"] for r in why if r["feasible"]]
+        self.assertEqual(fixes, ["room_fill(30)"])
+
+    def test_reset(self):
+        self.add(term="no_diagonal")
+        self.client.post("/api/constraints/reset")
+        self.assertNotIn("no_diagonal", self.active_terms())
+
+
+class TestPlannerApi(unittest.TestCase):
+    """The Planner page: try days x slots x room pool, score, apply."""
+
+    ROOT = os.path.dirname(CONFIG)
+    ONE_SLOT = [["09:00", "12:00"]]
+
+    @classmethod
+    def setUpClass(cls):
+        import app as webapp
+        webapp.ENGINE = ENGINE
+        cls.webapp = webapp
+        cls.client = webapp.app.test_client()
+
+    def setUp(self):
+        ENGINE.load_dataset(os.path.join(self.ROOT, "data_sample.pl"), label="sample")
+        ENGINE.reset_constraints()
+
+    def tearDown(self):
+        ENGINE.reset_constraints()
+        ENGINE.load_dataset(os.path.join(self.ROOT, "data.pl"), label="data.pl")
+        self.webapp._CACHE.clear()
+        self.webapp._LAYOUTS.clear()
+
+    def option(self, **over):
+        body = {"days": 1, "slots": self.ONE_SLOT, "start": "2026-12-01",
+                "pool": [{"rows": 4, "cols": 5, "count": 1}, {"rows": 3, "cols": 5, "count": 1}],
+                "weights": {"day": 100, "room": 50}}
+        body.update(over)
+        return self.client.post("/api/plan/option", json=body)
+
+    def test_page_and_setup(self):
+        self.assertEqual(self.client.get("/planner").status_code, 200)
+        setup = self.client.get("/api/plan/setup").get_json()
+        self.assertEqual(setup["start"], "2026-12-01")
+        self.assertEqual(setup["days"], 1)
+        self.assertEqual(setup["students"], 20)
+        self.assertEqual({(p["rows"], p["cols"]) for p in setup["pool"]}, {(4, 5), (3, 5)})
+
+    def test_a_feasible_option_has_a_score(self):
+        r = self.option().get_json()
+        self.assertTrue(r["feasible"])
+        self.assertEqual(r["score"], r["day_cost"] + r["room_cost"] + r["penalty"])
+        self.assertEqual(r["day_cost"], 100)
+        self.assertGreaterEqual(r["rooms_needed"], 1)
+        # the loaded setup is untouched
+        self.assertEqual(ENGINE.catalogue()["summary"]["sessions"], 1)
+
+    def test_an_infeasible_option_says_why(self):
+        r = self.option(pool=[{"rows": 2, "cols": 2, "count": 1}]).get_json()
+        self.assertFalse(r["feasible"])
+        self.assertIsNone(r["score"])
+        self.assertTrue(r["why"])
+
+    def test_bad_input_is_refused(self):
+        self.assertEqual(self.option(days=0).status_code, 400)
+        self.assertEqual(self.option(slots=[["9am", "noon"]]).status_code, 400)
+        self.assertEqual(self.option(start="tomorrow").status_code, 400)
+        self.assertEqual(self.option(pool=[]).status_code, 400)
+        self.assertEqual(self.option(weights={"day": -1, "room": 0}).status_code, 400)
+
+    def test_apply_makes_it_the_loaded_setup(self):
+        res = self.client.post("/api/plan/apply", json={
+            "days": 2, "slots": [["09:00", "12:00"], ["13:00", "16:00"]],
+            "start": "2026-12-01", "pool": [{"rows": 5, "cols": 5, "count": 2}]})
+        self.assertTrue(res.get_json()["ok"])
+        summary = ENGINE.catalogue()["summary"]
+        self.assertEqual(summary["sessions"], 4)
+        self.assertEqual(summary["rooms_available"], 2)
+
+
 class TestCapacityAndTerm(unittest.TestCase):
 
     @classmethod

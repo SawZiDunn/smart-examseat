@@ -115,7 +115,7 @@ students_for_room(Session, RoomId, Students) :-
 open_rooms(Students, Rooms) :-
     findall(Cap-spec(RoomId, Cap, ACap, MaxE),
             ( rules:available_room(RoomId, _, _),
-              rules:room_capacity(RoomId, Cap),
+              rules:usable_capacity(RoomId, Cap),          % room_fill(P) aware
               rules:room_accessible_capacity(RoomId, ACap),
               rules:max_same_exam_per_room(RoomId, MaxE) ),
             Pairs),
@@ -134,7 +134,7 @@ demand(Students, Total, AccessNeeded, ExamCounts) :-
     msort(Codes, SortedCodes),
     count_runs(SortedCodes, ExamCounts).
 
-access_student(s(StudentId, _)) :- rules:needs_accessible(StudentId).
+access_student(s(StudentId, _)) :- rules:requires_accessible_seat(StudentId).
 
 count_runs([], []).
 count_runs([X | Xs], [X-N | Rest]) :-
@@ -235,7 +235,7 @@ deal([S | Rest], Slots0, Slots, Unplaced) :-
 %  together. Among equally good rooms, use the tightest fit.
 place(Student, CohortSize, CohortAccess, Slots0, Slots) :-
     Student = s(StudentId, _),
-    (   rules:needs_accessible(StudentId) -> Access = yes ; Access = no ),
+    (   rules:requires_accessible_seat(StudentId) -> Access = yes ; Access = no ),
     best_slot(Slots0, Access, Student, CohortSize, CohortAccess, Best),
     Best = slot(RoomId, _, _, _, _, _),
     add_to_slot(RoomId, Student, Access, Slots0, Slots).
@@ -468,7 +468,7 @@ rebuild_slots(Groups, _Exclude, Slots) :-
             Slots).
 
 group_to_slot(RoomId, Students, slot(RoomId, Free, FreeA, MaxE, Counts, Rev)) :-
-    rules:room_capacity(RoomId, Cap),
+    rules:usable_capacity(RoomId, Cap),
     rules:room_accessible_capacity(RoomId, ACap),
     rules:max_same_exam_per_room(RoomId, MaxE),
     length(Students, Used),
@@ -491,7 +491,7 @@ open_extra_room(FailedRoomId, Slots0,
             ( rules:available_room(RoomId0, _, _),
               RoomId0 \== FailedRoomId,
               \+ memberchk(slot(RoomId0, _, _, _, _, _), Slots0),
-              rules:room_capacity(RoomId0, Cap0) ),
+              rules:usable_capacity(RoomId0, Cap0) ),
             Pairs),
     Pairs \== [],
     sort(1, @>=, Pairs, [Cap-RoomId | _]),

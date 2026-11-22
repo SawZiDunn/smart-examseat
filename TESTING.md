@@ -28,7 +28,7 @@ Filters are `filters(Years, Majors)`. An empty list means "everyone":
 ## 2. Automated tests
 
 ```bash
-make test            # everything (80 Prolog + 70 Python, about 45 s)
+make test            # everything (101 Prolog + 81 Python, about a minute and a half)
 make test-prolog     # plunit only:  swipl -q -g run_tests -t halt tests/test_prolog.pl
 make test-python     # bridge, web app, export and config tests
 ```
@@ -44,6 +44,9 @@ make test-python     # bridge, web app, export and config tests
 | `scenarios` | 〃 | the seating edge cases in section 5 succeed or fail as expected |
 | `timetable` | 〃 | the timetable is clash-free and within capacity; each failure reason is reported |
 | `term` | 〃 | cohort counts add up, capacity counts only open rooms, the whole term finishes every cohort |
+| `constraints` | 〃 | the default set; malformed constraints are refused; separation(2), no separation, column_gap and room_closed change the plan as they should; the validator checks added hard constraints; a custom Prolog rule prunes the search; unsafe rules are refused; soft penalty = weight x violations; the blame analysis names the culprit |
+| `timetable_constraints` | 〃 | no_exam_on, fixed_session and a custom timetable rule are obeyed; too few days is proven without search |
+| `planner` | 〃 | weekdays skip weekends; an option is scored (days x cost + rooms x cost + penalty) and the loaded setup restored; a too-small pool is refused; unused rooms are not counted; applying an option replaces the setup |
 | Python | `tests/test_pipeline.py` | term parser, bridge results agree with Prolog, CSV/PDF exports, every web endpoint, over-capacity refusal, whole-term endpoint, config parsing |
 
 ## 3. Console testing (no browser)
@@ -131,6 +134,24 @@ Open `http://127.0.0.1:5000/?view=term` to go straight to the whole-term view, o
 - [ ] **Students**: search by ID or name, filter by major, year or accessible seat; every row lists the student's exams and sessions
 - [ ] **Rooms**: every room with its size and accessible seats (dashed); closed rooms are greyed out
 
+**Constraints** (top right, *Constraints*; examples in `CONSTRAINTS.md`)
+- [ ] The page lists the four defaults as Prolog facts, and the six always-on rules
+- [ ] Pick `column_gap(n)` in the catalogue, add it as hard, *Run*: feasible; the room grids on the seating page have empty rows between same-exam students
+- [ ] Change a constraint from hard to soft and back; remove one; *Reset to defaults*
+- [ ] Type `separation(x)` or `foo(1)`: a readable refusal, nothing added
+- [ ] Click the example "no same major side by side", add it as soft weight 2, *Run*: feasible, with a penalty and example pairs
+- [ ] Add `room_fill(30)` (small config), *Run*: not feasible; *Which constraint is to blame?* names `room_fill(30)`
+- [ ] Add the example "year 1 students not in the front row" as hard: not feasible, and the blame table names both `accessible_seats` and the rule
+- [ ] Write `violation(X) :- shell(ls), X = 1.` as a rule: refused ("shell/1 is not allowed")
+
+**Planner** (top right, *Planner*)
+- [ ] The form starts from the loaded data: first exam day, a range of days around the current one, the current slots, and the current rooms as the pool
+- [ ] On `config_small.toml`: days 1-5, tick 1 and 2 slots a day, *Find the best*: 1 day and 2 days x 1 slot are refused with the reason (too few sessions); the best is 3 days (score 400)
+- [ ] *+ Add a room size* adds a row; the option count and pool size update
+- [ ] Raise *Cost per room needed* and run again: options with fewer rooms win more often
+- [ ] *Use this option*: the Data page timetable now has the chosen days and slots, and the seating page uses the pool
+- [ ] Add a constraint on the Constraints page (e.g. `no_exam_at('13:00')`) and run the planner again: the 2-slot options change
+
 **Whole term**
 - [ ] **Seat every session**: 20 / 20 sessions seated, and every cohort cell is green with seated = total
 - [ ] Clicking a session row opens that session's seating plan
@@ -199,7 +220,7 @@ subjects = [4, 5, 5, 4]
 If the exams can't fit, `make data` stops with a reason and leaves `data.pl` unchanged:
 ```
 timetabling failed: The exams need at least 15 sessions but the exam period has 14.
-Add exam days or rooms in config.toml.
+Add exam days or rooms in config.toml, or relax a constraint.
 ```
 
 Tested with the default students and rooms:
