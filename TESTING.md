@@ -28,7 +28,7 @@ Filters are `filters(Years, Majors)`. An empty list means "everyone":
 ## 2. Automated tests
 
 ```bash
-make test            # everything (80 Prolog + 61 Python, about 45 s)
+make test            # everything (80 Prolog + 64 Python, about 45 s)
 make test-prolog     # plunit only:  swipl -q -g run_tests -t halt tests/test_prolog.pl
 make test-python     # bridge, web app, export and config tests
 ```
@@ -40,7 +40,7 @@ make test-python     # bridge, web app, export and config tests
 | `allocation` | 〃 | each student goes to exactly one room, no room is over capacity, closed rooms are unused, cohort fit prefers a tight room, and reallocation keeps everyone |
 | `solver` | 〃 | one seat per student, no shared seats, accessibility, separation; reports capacity failures, proven `no_solution` and `search_limit` distinctly |
 | `validator` | 〃 | accepts a good plan; catches 9 kinds of injected violation |
-| `pipeline_sample` / `pipeline_full` | 〃 | end to end: every session of the full dataset solves and validates; sess1 seats 585 students in six rooms with at most one retry |
+| `pipeline_sample` / `pipeline_full` | 〃 | end to end: every session of the full dataset solves and validates; sess1 seats everyone within the open rooms |
 | `scenarios` | 〃 | the seating edge cases in section 5 succeed or fail as expected |
 | `timetable` | 〃 | the timetable is clash-free and within capacity; each failure reason is reported |
 | `term` | 〃 | cohort counts add up, capacity counts only open rooms, the whole term finishes every cohort |
@@ -62,7 +62,7 @@ Exams seated per cohort (seated/total, ! = not finished)
 major   year 1      year 2      year 3      year 4
 BME     225/225     225/225     200/200     200/200
 ...
-SE      300/300     165/165     200/200     180/180
+SE      250/250     150/150     200/200     180/180
 ```
 
 **One session in detail**, or one room drawn as a grid:
@@ -98,7 +98,7 @@ make run-sample          # 20-student dataset
 python3 app.py --dataset tests/scenarios/not_enough_seats.pl   # any data file
 ```
 
-Open `http://127.0.0.1:5000/?view=term` to go straight to the whole-term view.
+Open `http://127.0.0.1:5000/?view=term` to go straight to the whole-term view, or `/data` for the data page.
 
 **Selection counter**
 - [ ] Picking a session shows *selected / seats* and the accessible count; the year and major chips show how many students each one covers
@@ -106,7 +106,7 @@ Open `http://127.0.0.1:5000/?view=term` to go straight to the whole-term view.
 - [ ] On `not_enough_seats.pl` (10 students, 8 seats), nothing ticked shows the counter in red and **Generate** is disabled; ticking one major brings it under the limit, and chips that would push it back over are greyed out
 
 **One session**
-- [ ] `sess1`, no filters: about 585 students in 6 rooms; the validator says valid
+- [ ] `sess1`, no filters: 480 students in about 9 rooms; the validator says valid
 - [ ] Tick year 1 and major SE: the counts drop and only those students appear
 - [ ] Room tabs: each exam has its own colour; same-exam students never sit side by side; students marked **A** sit in the accessible seats
 - [ ] Seats fill column by column, so each cohort sits as a block of columns
@@ -115,8 +115,16 @@ Open `http://127.0.0.1:5000/?view=term` to go straight to the whole-term view.
 - [ ] Download the CSV, room-summary CSV and PDF, and open each one
 - [ ] With a failing scenario file, the page shows a readable reason, not a crash
 
+**Data page** (the `data.pl → view data` button, top right)
+- [ ] The cards match `make data --stats`: students, subjects, exam seats, sessions, rooms, seats
+- [ ] **Cohorts**: one cell per (major, year) with its student count and its subjects, each with its session
+- [ ] **Timetable**: days × slots; each session lists its subjects and cohorts, and the load bar never passes 80% of the seats
+- [ ] Clicking a cohort (e.g. *SE Y1*) opens the seating page for just that cohort in that session; *Seat this session* seats everyone
+- [ ] **Students**: search by ID or name, filter by major, year or accessible seat; every row lists the student's exams and sessions
+- [ ] **Rooms**: every room with its size and accessible seats (dashed); closed rooms are greyed out
+
 **Whole term**
-- [ ] **Seat every session**: 16 / 16 sessions seated, and every cohort cell is green with seated = total
+- [ ] **Seat every session**: 20 / 20 sessions seated, and every cohort cell is green with seated = total
 - [ ] Clicking a session row opens that session's seating plan
 
 ## 5. Edge-case datasets (`tests/scenarios/`)
@@ -166,9 +174,9 @@ make data            # = python3 generate_data.py --stats
 | `[defaults] subjects` | `5` | subjects per (major, year) when a major does not say |
 | `[defaults] access_rate` | `0.03` | share of students who need an accessible seat |
 | `[majors.<code>]` | 10 majors | one table per major. `students = 40` means 40 in every year; `students = [60, 55, 50, 45]` sets each year. The same goes for `subjects`. An empty table uses the defaults |
-| `[exam_period]` | 8 days × 2 slots | `start_date`, `days` (weekdays; weekends are skipped), `slots` → the sessions |
+| `[exam_period]` | 10 days × 2 slots | `start_date`, `days` (weekdays; weekends are skipped), `slots` → the sessions |
 | `[timetable] max_fill_percent` | `80` | the most of the open seats one session may use |
-| `[[rooms.groups]]` | 16 rooms | `count`, `rows`, `cols`, `available` |
+| `[[rooms.groups]]` | 10 rooms of 9x9 | `count`, `rows`, `cols`, `available` |
 | `seed` | fixed | change it for a different random roster |
 
 Example: year-1 SE has 5 subjects, year-2 SE has 3, and Civil year 1 has 4:
@@ -182,7 +190,7 @@ subjects = [4, 5, 5, 4]
 
 If the exams can't fit, `make data` stops with a reason and leaves `data.pl` unchanged:
 ```
-timetabling failed: The exams need at least 9 sessions but the exam period has 6.
+timetabling failed: The exams need at least 15 sessions but the exam period has 14.
 Add exam days or rooms in config.toml.
 ```
 
@@ -190,9 +198,10 @@ Tested with the default students and rooms:
 
 | `days` | Sessions | Result |
 |---|---|---|
-| 8 (default) | 16 | timetable built; busiest session at 41% of seats; every session seats and validates |
-| 5 | 10 | timetable built; busiest session at 67% of seats; every session seats and validates |
-| 3 | 6 | refused: at least 9 sessions are needed |
+| 12 | 24 | timetable built; busiest session at 48% of seats; every session seats and validates |
+| 10 (default) | 20 | timetable built; busiest session at 59% of seats; every session seats and validates |
+| 8 | 16 | timetable built (72% of seats), but about half the sessions fail to seat with `search_limit`: rooms are too full for the separation rule |
+| 7 | 14 | refused: at least 15 sessions are needed |
 
 ### The small demo dataset: `config_small.toml`
 
@@ -208,12 +217,11 @@ copy it over `config.toml` to use it.
 of 8x8 (128 seats) and 1 closed room.
 
 ```bash
-cp config.toml config_full.toml          # keep the full config
 cp config_small.toml config.toml
 make data && make run
 
-# afterwards
-cp config_full.toml config.toml && make data
+# afterwards: back to the main set
+cp config_big.toml config.toml && make data
 ```
 
 While the small set is in `data.pl`, some Python tests fail, because they

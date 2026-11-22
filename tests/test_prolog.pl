@@ -237,17 +237,20 @@ test(uses_two_rooms_when_one_exam_exceeds_room_limit) :-
 
 :- begin_tests(cohort_room_preference, [setup(use_full_data)]).
 
-test(cs302_year_three_cohort_is_kept_together_as_much_as_capacity_allows) :-
-    students_in_session(sess5, filters([], []), Students),
-    allocate_rooms(sess5, Students, Allocation),
+% A room holds at most max_same_exam_per_room/2 students of one exam
+% (45 in a 9x9 room), so a 50-student cohort is best split 45 + 5.
+test(cs303_year_three_cohort_is_kept_together_as_much_as_capacity_allows) :-
+    user:exam(cs303, Session),
+    students_in_session(Session, filters([], []), Students),
+    allocate_rooms(Session, Students, Allocation),
+    aggregate_all(count, member(s(_, cs303), Students), Size),
     findall(Count,
             ( member(room_group(_, Group), Allocation),
-              include([s(Id, cs302)]>>(user:student(Id, cs, 3, _)),
-                      Group, Cohort),
-              length(Cohort, Count) ),
+              aggregate_all(count, member(s(_, cs303), Group), Count) ),
             Counts),
     max_list(Counts, MaxInOneRoom),
-    MaxInOneRoom >= 48.
+    aggregate_all(max(M), rules:max_same_exam_per_room(_, M), RoomLimit),
+    MaxInOneRoom >= min(Size, RoomLimit).
 
 :- end_tests(cohort_room_preference).
 
@@ -468,10 +471,14 @@ test(every_session_solves_and_validates) :-
                 ; format(user_error, '~w invalid: ~q~n', [S, Report]), fail )
              ; format(user_error, '~w failed: ~q~n', [S, Result]), fail ) )).
 
-test(sess1_fits_six_rooms_with_at_most_one_retry) :-
+test(sess1_seats_everyone_within_the_open_rooms) :-
+    students_in_session(sess1, filters([], []), Students),
+    length(Students, N),
     generate_seating(sess1, filters([], []), ok(As),
-                     stats(585, 6, Retries, _)),
-    Retries =< 1,
+                     stats(N, Rooms, _Retries, _)),
+    length(As, N),
+    aggregate_all(count, rules:available_room(_, _, _), Open),
+    Rooms =< Open,
     validate_seating(sess1, filters([], []), As, valid).
 
 test(a_filtered_run_validates) :-

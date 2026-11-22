@@ -317,6 +317,10 @@ class SeatingEngine:
         """Sessions, majors, years, rooms and a dataset summary for the UI."""
         return self._json("catalogue_json(J)", "J")
 
+    def dataset_contents(self) -> dict:
+        """Everything in the loaded data file, for the data page."""
+        return self._json("dataset_json(J)", "J")
+
     def room_layout(self, room_id: str) -> dict:
         """Rows, cols and the seat list (with seat types) of one room."""
         return self._json(f"room_layout_json({_atom(room_id)}, J)", "J")

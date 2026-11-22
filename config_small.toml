@@ -13,9 +13,10 @@
 #   3 exam days x 2 slots = 6 sessions
 #   2 open rooms of 8x8 = 128 seats (8 accessible), 1 room closed
 #
-# To use it: keep a copy of config.toml, then
+# To use it:
 #   cp config_small.toml config.toml && make data && make run
-# Put the full config.toml back and run `make data` again afterwards.
+# Afterwards, back to the main set:
+#   cp config_big.toml config.toml && make data
 # While the small set is in data.pl, some Python tests fail (they expect
 # the full dataset).
 # ===========================================================================
@@ -43,7 +44,7 @@ subjects = [0, 2]
 
 [exam_period]
 start_date = "2026-12-01"     # Tue 1 Dec - Thu 3 Dec
-days = 2
+days = 3
 slots = [["09:00", "12:00"], ["13:00", "16:00"]]
 
 [timetable]
@@ -57,9 +58,3 @@ count = 2
 rows = 8
 cols = 8
 available = true
-
-[[rooms.groups]]              # r103: closed, never used
-count = 1
-rows = 8
-cols = 8
-available = false

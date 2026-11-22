@@ -16,13 +16,14 @@
       <p>University exam seating planner &middot; Prolog CSP engine</p>
     </div>
   </div>
-  <div class="dataset">
-    <code>{{ dataset }}</code>
+  <a class="dataset dataset-link" href="{{ url_for('data_page') }}"
+     title="See everything in {{ dataset }}: students, subjects, timetable, rooms">
+    <code>{{ dataset }} <span class="open-hint">&rarr; view data</span></code>
     <span>{{ catalogue.summary.students }} students &middot;
           {{ catalogue.summary.subjects }} subjects &middot;
           {{ catalogue.summary.rooms_available }} rooms &middot;
           {{ catalogue.summary.seats }} seats</span>
-  </div>
+  </a>
 </header>
 
 <main>

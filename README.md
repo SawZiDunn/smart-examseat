@@ -3,8 +3,6 @@
 University exam seating arrangement planner, written as a **Constraint
 Satisfaction Problem in Prolog** with a Python/Flask admin interface.
 
-01286342 Artificial Intelligence &middot; Software Engineering, KMITL
-
 | | |
 |---|---|
 | 67011158 | Kyi Thant Sin |
@@ -36,11 +34,9 @@ flowchart TD
     val --> ui["<b>app.py</b> (Flask)<br/>seat grids, whole-term coverage"] --> out["<b>export.py</b><br/>CSV / PDF"]
 ```
 
-Who owns each stage (if the diagram above does not render, this is the same pipeline):
-
 ```
 config.toml → Data + Timetable → Allocation → Seat Solver → Validator → UI → CSV/PDF
-                (A, CSP #1)         (A)        (B, CSP #2)      (A)      (C)    (C)
+                (CSP #1)                        (CSP #2)      
 ```
 
 ### Step by step
@@ -72,13 +68,19 @@ config.toml → Data + Timetable → Allocation → Seat Solver → Validator �
    `data.pl` unchanged. How the decision is made is in section 4.6.
 
    **The timetable is fixed.** Once `make data` has run, `se101` is examined
-   in `sess1` (Tuesday 1 Dec, 09:00-12:00) and nowhere else, and all 60
+   in `sess1` (Tuesday 1 Dec, 09:00-12:00) and nowhere else, and all 50
    year-1 SE students sit it then, together. Each subject gets exactly one
    session. You don't pick sessions by hand: the timetabler picks them
    automatically. The timetable stays the same until you run `make data`
    again. Re-running with the same `config.toml` gives the same timetable,
    because the seed is fixed. If you change the config (more days, different
    student counts and so on), the sessions can change.
+
+**Look at the data before seating.** The **data page** (the `data.pl`
+button at the top right of the UI, or `/data`) shows what is in the data
+file: students and subjects per cohort, the timetable (which subjects and
+cohorts sit in each session, with a link to seat any of them), every student
+with their exams, and the rooms.
 
 **For each session (in the UI)**
 
@@ -90,7 +92,7 @@ config.toml → Data + Timetable → Allocation → Seat Solver → Validator �
      everyone whose subject is in `sess1`, including the year-1 SE students
      for `se101`.
    - The year and major filters only narrow who gets seated. For example,
-     `sess1` + year 1 + SE seats only those 60 students for `se101`. The
+     `sess1` + year 1 + SE seats only those 50 students for `se101`. The
      filters can't move `se101` to another session.
 5. **Collect the students.** `students_in_session/3` lists everyone sitting
    an exam in that session who matches the filters, as
@@ -115,25 +117,25 @@ config.toml → Data + Timetable → Allocation → Seat Solver → Validator �
 **For the whole term**
 
 10. **Seat every session.** *Seat every session* in the UI (or `make term`)
-    repeats steps 5-8 for all 16 sessions, so every subject is seated in its
+    repeats steps 5-8 for all 20 sessions, so every subject is seated in its
     own session. It shows a year x major table of exams seated per cohort; a
     cohort is finished when all of its exams are seated.
 
 ### Speed
 
-On the default config (1,940 students, 191 subjects, 16 sessions, 14 open
-rooms) the timetable is built in about 0.2 s, each session of ~580 students
-is seated and validated in **0.1-1 s** (6-8 rooms, up to 6 allocation
-retries), and the whole term in about 10 s.
+On the main config (`config_big.toml`: 1,925 students, 191 subjects, 20
+sessions, 10 rooms of 9x9) the timetable is built in about 0.2 s, each
+session of 435-480 students is seated and validated in **0.3-0.7 s** (6-10
+rooms, 3-6 allocation retries), and the whole term in about 10 s.
 
 ```
 session    students    rooms     retries     validator
-sess1      585         6         1           valid (239 ms)
-sess2      580         7         5           valid (913 ms)
+sess1      480         9         5           valid (536 ms)
+sess2      440         6         3           valid (306 ms)
 ...
-sess13     575         6         0           valid (61 ms)
+sess12     475         10        6           valid (678 ms)
 ...
-sess16     575         8         5           valid (818 ms)
+sess20     435         8         5           valid (521 ms)
 ```
 
 ---
@@ -200,7 +202,7 @@ swipl main.pl
 | `tests/test_prolog.pl` | all | 80 plunit tests |
 | `tests/scenarios/` | all | tiny edge-case datasets for seating and timetabling |
 | `TESTING.md` | all | every way to test the system, and how to change the dataset size |
-| `tests/test_pipeline.py` | all | 61 Python tests (bridge, UI, exports, config, capacity) |
+| `tests/test_pipeline.py` | all | 64 Python tests (bridge, UI, data page, exports, config, capacity) |
 
 The facts and predicates each part relies on are listed in
 [section 8](#8-interface-reference). If something breaks: wrong students,
@@ -373,7 +375,7 @@ the dataset size) see [`TESTING.md`](TESTING.md).
   reasons, nine *injected* violations the validator must catch, the
   edge-case datasets in `tests/scenarios/`, the timetabler (clash-free,
   within capacity, and each failure reason), and the whole-term run.
-* `tests/test_pipeline.py` - 61 tests: the Prolog-term parser, the bridge
+* `tests/test_pipeline.py` - 64 tests: the Prolog-term parser, the bridge
   (both the raw `ok(...)`/`failed(...)` route and the JSON route), every
   session solving and validating, CSV/PDF output, every HTTP endpoint, the
   capacity check, the whole-term endpoint, and config parsing.
@@ -382,20 +384,22 @@ the dataset size) see [`TESTING.md`](TESTING.md).
 
 ## 7. Dataset shape
 
-Everything below comes from `config.toml`; edit it and run `make data`.
+Everything below comes from `config.toml`, which holds a copy of
+`config_big.toml` (the main demo set). `config_small.toml` is a smaller
+set (120 students, 2 years, 3 majors) to copy in for a quick demo.
 
-| | default config |
+| | `config_big.toml` |
 |---|---|
 | majors | 10: SE, CE, CS, EE, EME, ME, RAI, ENE, IE, BME (lowercase codes in the data, uppercase on screen) |
 | year levels | 1-4 |
-| students | 1,940 - set per (major, year), default 50 |
+| students | 1,925 - set per (major, year), default 50, at most 50 |
 | subjects | 191 - set per (major, year), default 5; each cohort has its **own** subjects (`se101`, `se102`, ... `ce203`) |
-| enrolments | 9,245 - every student sits all of their cohort's subjects |
-| sessions | 16: 8 weekdays x 2 slots from 2026-12-01 |
-| rooms | 16 (14 available, 2 closed for maintenance) |
-| seats | 1,432 in open rooms, of which 56 accessible |
+| enrolments | 9,180 - every student sits all of their cohort's subjects |
+| sessions | 20: 10 weekdays (two weeks) x 2 slots from 2026-12-01 |
+| rooms | 10 rooms of 9x9, all open (r101-r110) |
+| seats | 810, of which 40 accessible |
 | accessibility | ~3% of students; accessible seats at row 1, columns 1, 3, 5, 7 |
-| peak session | 585 students, 41% occupancy (the timetabler caps it at 80%) |
+| peak session | 480 students, 59% occupancy (the timetabler caps it at 80%) |
 
 **The clash-free invariant.** The timetabling CSP never puts two subjects
 that share a student into the same session. `generate_data.py` re-checks

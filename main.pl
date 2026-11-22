@@ -302,6 +302,48 @@ catalogue_json(Json) :-
                        rooms_available: NRooms, seats: NSeats } },
         [as(atom)]).
 
+%! dataset_json(-Json) is det.
+%  Everything in the loaded data file, for the UI's data page: students
+%  (with the exams each one sits), subjects (with their session and the
+%  cohorts that take them), sessions and rooms. No seating is done here.
+dataset_json(Json) :-
+    list_majors(Majors),
+    list_years(Years),
+    findall(_{ id: Id, name: Name, major: M, year: Y, access: A, exams: Exams },
+            ( user:student(Id, M, Y, A),
+              ( user:student_name(Id, Name) -> true ; Name = '' ),
+              findall(C, user:enrolled(Id, C), Exams0),
+              msort(Exams0, Exams) ),
+            Students),
+    findall(_{ code: C, session: S, students: N, cohorts: Cohorts },
+            ( user:subject(C),
+              ( user:exam(C, S0) -> S = S0 ; S = '' ),
+              aggregate_all(count, user:enrolled(_, C), N),
+              (   setof(M-Y, St^A^( user:enrolled(St, C),
+                                    user:student(St, M, Y, A) ), Pairs)
+              ->  true
+              ;   Pairs = []
+              ),
+              findall(_{ major: M, year: Y }, member(M-Y, Pairs), Cohorts) ),
+            Subjects),
+    list_sessions(SessionIds),
+    findall(_{ id: S, date: D, start: St, end: En },
+            ( member(S, SessionIds), session_info(S, D, St, En) ),
+            Sessions),
+    findall(_{ id: R, rows: Rows, cols: Cols, available: Avail,
+               seats: NSeats, accessible: NAcc, accessible_at: AccAt },
+            ( user:room(R, Rows, Cols, Avail),
+              aggregate_all(count, user:seat(R, _, _, _), NSeats),
+              findall([Row, Col], user:seat(R, Row, Col, accessible), AccAt),
+              length(AccAt, NAcc) ),
+            Rooms),
+    total_capacity(Seats, AccSeats),
+    atom_json_dict(Json,
+        _{ majors: Majors, years: Years, students: Students,
+           subjects: Subjects, sessions: Sessions, rooms: Rooms,
+           seats: Seats, accessible_seats: AccSeats },
+        [as(atom)]).
+
 %! room_layout_json(+RoomId, -Json) is det.
 room_layout_json(RoomId, Json) :-
     room_layout(RoomId, Rows, Cols, Seats),

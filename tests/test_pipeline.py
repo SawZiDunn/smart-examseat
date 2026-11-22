@@ -366,6 +366,28 @@ class TestWebApp(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.get_json()["room"], "r101")
 
+    def test_data_page_renders_and_is_linked(self):
+        res = self.client.get("/data")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn(b"Timetable", res.data)
+        self.assertIn(b'href="/data"', self.client.get("/").data)
+
+    def test_dataset_endpoint_matches_the_catalogue(self):
+        data = self.client.get("/api/dataset").get_json()
+        summary = ENGINE.catalogue()["summary"]
+        self.assertEqual(len(data["students"]), summary["students"])
+        self.assertEqual(len(data["subjects"]), summary["subjects"])
+        self.assertEqual(data["seats"], summary["seats"])
+        # every subject is timetabled, and its headcount is its enrolments
+        self.assertTrue(all(s["session"] for s in data["subjects"]))
+        enrolments = sum(len(s["exams"]) for s in data["students"])
+        self.assertEqual(sum(s["students"] for s in data["subjects"]), enrolments)
+
+    def test_dataset_subjects_name_their_cohorts(self):
+        data = self.client.get("/api/dataset").get_json()
+        se101 = next(s for s in data["subjects"] if s["code"] == "se101")
+        self.assertEqual(se101["cohorts"], [{"major": "se", "year": 1}])
+
 
 class TestCapacityAndTerm(unittest.TestCase):
 
