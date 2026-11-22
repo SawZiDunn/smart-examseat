@@ -81,7 +81,6 @@
       <a id="csv" class="btn-link disabled" href="#">Full plan (CSV)</a>
       <a id="roomscsv" class="btn-link disabled" href="#">Room summary (CSV)</a>
       <a id="pdf" class="btn-link disabled" href="#">All rooms (PDF)</a>
-      <a id="pdfroom" class="btn-link disabled" href="#">This room (PDF)</a>
     </section>
 
     <section class="rules">
@@ -489,7 +488,6 @@ function selectRoom(roomId) {
 
   renderStudents(room.assignments);
   document.getElementById("search").value = "";
-  updateRoomPdfLink();
 }
 
 function renderStudents(rows, filter) {
@@ -525,17 +523,6 @@ function setDownloads(enabled) {
     el.classList.toggle("disabled", !enabled);
     el.href = enabled ? href : "#";
   }
-  updateRoomPdfLink(enabled);
-}
-
-function updateRoomPdfLink(enabled) {
-  const el = document.getElementById("pdfroom");
-  const on = (enabled !== false) && state.report && state.room;
-  el.classList.toggle("disabled", !on);
-  el.href = on
-    ? "/export/pdf?" + queryString(currentFilters()) + "&room=" + state.room
-    : "#";
-  el.textContent = state.room ? `Room ${state.room} (PDF)` : "This room (PDF)";
 }
 
 async function validate() {
