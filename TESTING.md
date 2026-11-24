@@ -148,8 +148,10 @@ Open `http://127.0.0.1:5000/?view=term` to go straight to the whole-term view, o
 
 **Planner** (top right, *Planner*)
 - [ ] The form starts from the loaded data: first exam day, a range of days around the current one, the current slots, and the current rooms as the pool
-- [ ] On `small.xlsx`: days 1-5, tick 1 and 2 slots a day, *Find the best*: 1 day and 2 days x 1 slot are refused with the reason (too few sessions); the best is 3 days (score 400)
-- [ ] *+ Add a room size* adds a row; the option count and pool size update
+- [ ] On `small.xlsx`: days 1-5, tick 1 and 2 slots a day, *Find the best*: 20 options (2 room mixes: 1 or 2 rooms of 8x8). The best is 3 days x 2 slots with 1 room (score 350). Tick *Show the options that do not work* (10): each has its reason, e.g. with 1 room the exams need at least 6 sessions, with 2 rooms at least 3
+- [ ] Untick *Also try fewer rooms*: 10 options, every one with both rooms; the best is 3 days x 1 slot (score 400)
+- [ ] *+ Add a room size* adds a row; the option count, the number of room mixes and the pool size update
+- [ ] *Choose* on another feasible row: the top card shows it and what the best was; *Use this option* applies the chosen one, rooms included
 - [ ] Raise *Cost per room needed* and run again: options with fewer rooms win more often
 - [ ] *Use this option*: the Data page timetable now has the chosen days and slots, and the seating page uses the pool
 - [ ] Add a constraint on the Constraints page (e.g. `no_exam_at('13:30')`) and run the planner again: the 2-slot options change

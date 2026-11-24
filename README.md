@@ -141,11 +141,14 @@ with their exams, and the rooms.
 
 12. **How many days, slots and rooms are needed?** The *Planner* page keeps
     the students and subjects and varies the resources: a range of exam days,
-    1-3 slots a day, and a pool of rooms of mixed sizes. Every combination is
-    timetabled and seated for real under the active constraints, and scored
-    as `days x day cost + rooms needed x room cost + soft penalty`. The page
-    recommends the lowest score, and *Use this option* makes it the loaded
-    setup. Section 4.8 has the details.
+    1 or 2 slots a day (morning, afternoon), and the rooms: from a pool of
+    mixed sizes it tries every count of each size, from one room up to the
+    whole pool. Every combination of days x slots x rooms is timetabled and
+    seated for real under the active constraints, and scored as
+    `days x day cost + rooms needed x room cost + soft penalty`. The page
+    recommends the lowest score; *Choose* picks any other feasible option,
+    and *Use this option* makes it the loaded setup. Section 4.8 has the
+    details.
 ```
 
 ---
@@ -430,9 +433,12 @@ plan_option(option(Days, Slots, Start, Pool), weights(DayCost, RoomCost), Result
     ...  Score is Days * DayCost + RoomsNeeded * RoomCost + Penalty.
 ```
 
-* **Generate**: the Planner page lists every (days, slots per day) in the
-  chosen ranges; the room pool (e.g. 4 halls of 12x12, 6 rooms of 10x10)
-  is offered in full.
+* **Generate**: the Planner page lists every (days, slots per day, rooms)
+  combination. Rooms: for a pool such as 3 rooms of 8x8 and 2 of 6x6, every
+  count from 0 to 3 of the first size and 0 to 2 of the second, at least one
+  room in all - 11 room mixes. Unticking *Also try fewer rooms* offers only
+  the whole pool. On the small dataset, days 2-4 x 1-2 slots x those 11
+  mixes is 66 options, tried in about a second.
 * **Test**: `evaluate/1` under the active constraints. Hopeless options
   stop at the timetabler's lower bounds without searching (too few sessions,
   too few days); the rest are seated for real.
@@ -457,6 +463,9 @@ rooms, 2 slots a day, day cost 100 and room cost 50:
 
 Each option is a full timetable and seating run, about 20 s on this data;
 the page sends the options one at a time so the table fills in as it goes.
+That table is with *Also try fewer rooms* off: on with this pool it would
+be 244 room mixes per (days, slots), so on the big dataset keep it off or
+keep the pool small.
 
 ---
 
@@ -558,7 +567,7 @@ The student names in the demo workbooks are made up.
 | sessions | 20: 10 weekdays x 2 slots (09:30-12:30, 13:30-16:30) from 2026-12-01 | 6: 3 days x 2 slots |
 | rooms | 10 rooms of 9x9, all open (r101-r110) | 2 rooms of 8x8 |
 | seats | 810, of which 40 accessible | 128, of which 8 accessible |
-| accessibility | ~3% of students; accessible seats at row 1, columns 1, 3, 5, 7 | the same |
+| accessibility | 67 students flagged in the Access column (`wheelchair` or `other_accessible`); accessible seats at row 1, columns 1, 3, 5, 7 | 5 students flagged; the same seats |
 | peak session | 480 students, 59% occupancy (the timetabler caps it at 80%) | |
 
 `data.pl` is built from `datasets/big.xlsx`; the tests expect it.

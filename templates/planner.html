@@ -55,6 +55,9 @@
         <tbody id="pool"></tbody>
       </table>
       <button id="addroom" class="small-btn">+ Add a room size</button>
+      <label class="check-row"><input type="checkbox" id="fewer" checked>
+        <span>Also try fewer rooms: every count from 0 to <em>How many</em> for each size (at least 1 room
+        in all), and every mix of sizes</span></label>
 
       <span class="field-label weights-label">Score <em>(lower is better)</em></span>
       <div class="form-grid">
@@ -88,9 +91,11 @@
     <div class="card hidden" id="resultscard">
       <h2>Every option</h2>
       <p class="hint">Press <b>Choose</b> on any feasible option to see it above and use it instead of the best.</p>
+      <label class="check-row"><input type="checkbox" id="showno">
+        <span>Show the options that do not work (<b id="nno">0</b>), with the reason</span></label>
       <div class="table-scroll">
         <table class="ctable results">
-          <thead><tr><th>Days</th><th>Slots</th><th>Result</th><th>Rooms needed</th>
+          <thead><tr><th>Days</th><th>Slots</th><th>Rooms tried</th><th>Result</th><th>Rooms needed</th>
             <th>Penalty</th><th>Score</th><th></th></tr></thead>
           <tbody id="results"></tbody>
         </table>
@@ -154,18 +159,43 @@ function slotsFor(k) {
     document.querySelector(`.st[data-k="${k}"][data-i="${i}"]`).value,
     document.querySelector(`.en[data-k="${k}"][data-i="${i}"]`).value]);
 }
+// Every sub-pool: 0..count rooms of each size, at least one room in all,
+// smallest first. Without "fewer rooms" only the whole pool.
+function pools() {
+  const pool = readPool();
+  if (!$("fewer").checked) return pool.length ? [pool] : [];
+  let combos = [[]];
+  for (const p of pool) {
+    const next = [];
+    for (const c of combos) for (let n = 0; n <= p.count; n++) next.push([...c, { ...p, count: n }]);
+    combos = next;
+  }
+  const seats = q => q.reduce((t, p) => t + p.rows * p.cols * p.count, 0);
+  return combos.map(c => c.filter(p => p.count > 0)).filter(c => c.length)
+    .sort((a, b) => seats(a) - seats(b));
+}
 function options() {
   const lo = +$("dmin").value, hi = +$("dmax").value;
   const ks = [...document.querySelectorAll(".trysl:checked")].map(c => +c.dataset.k);
+  const ps = pools();
   const out = [];
-  for (let d = lo; d <= hi; d++) for (const k of ks) out.push({ days: d, k });
+  for (let d = lo; d <= hi; d++) for (const k of ks) for (const pool of ps) out.push({ days: d, k, pool });
   return out;
 }
+function poolText(pool) {
+  return pool.map(p => `<span class="xchip"><b>${p.count}</b><small>&times; ${p.rows}&times;${p.cols}</small></span>`).join("");
+}
+function poolWords(pool) {
+  return pool.map(p => `${p.count} room${p.count > 1 ? "s" : ""} of ${p.rows}&times;${p.cols}`).join(" + ");
+}
+const roomsIn = pool => pool.reduce((t, p) => t + p.count, 0);
 function updateCount() {
   const pool = readPool();
   const seats = pool.reduce((n, p) => n + p.rows * p.cols * p.count, 0);
   const rooms = pool.reduce((n, p) => n + p.count, 0);
-  $("count").textContent = `${options().length} option(s), pool of ${rooms} rooms / ${seats} seats`;
+  const n = options().length;
+  $("count").textContent = `${n} option(s) (${pools().length} room mix${pools().length === 1 ? "" : "es"}), ` +
+    `pool of ${rooms} rooms / ${seats} seats` + (n > 200 ? " - this will take a while" : "");
 }
 
 async function setup() {
@@ -176,13 +206,13 @@ async function setup() {
   $("dmax").value = s.days + 2;
   slotRows(DEFAULT_SLOTS, [1, 2]);   // try both: morning only, and morning + afternoon
   s.pool.forEach(poolRow);
-  ["dmin", "dmax", "start"].forEach(id => $(id).onchange = updateCount);
+  ["dmin", "dmax", "start", "fewer"].forEach(id => $(id).onchange = updateCount);
   updateCount();
 }
 
 // ---------- running ----------
 function body(o) {
-  return { days: o.days, slots: slotsFor(o.k), start: $("start").value, pool: readPool(),
+  return { days: o.days, slots: slotsFor(o.k), start: $("start").value, pool: o.pool,
            weights: { day: +$("wday").value, room: +$("wroom").value } };
 }
 
@@ -194,13 +224,19 @@ function roomsText(r) {
 
 function renderResults() {
   const feasible = S.results.filter(r => r.feasible);
-  S.best = feasible.reduce((b, r) => (!b || r.score < b.score || (r.score === b.score && r.days < b.days)) ? r : b, null);
+  // lowest score; on a tie fewer days, then fewer rooms tried
+  const key = r => [r.score, r.days, roomsIn(r._req.pool)];
+  const less = (a, b) => { const x = key(a), y = key(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i]; return false; };
+  S.best = feasible.reduce((b, r) => (!b || less(r, b)) ? r : b, null);
   const maxScore = Math.max(1, ...feasible.map(r => r.score));
   if (!S.picked) S.chosen = S.best;          // follow the best until the user chooses
-  $("results").innerHTML = S.results.map((r, i) => `
+  const showNo = $("showno").checked;
+  $("nno").textContent = S.results.length - feasible.length;
+  $("results").innerHTML = S.results.map((r, i) => (!r.feasible && !showNo) ? "" : `
     <tr class="${r === S.best ? "best-row" : ""} ${r === S.chosen ? "chosen-row" : ""}">
       <td><b>${r.days}</b></td>
       <td>${r.slots} <span class="muted">(${r.sessions} session${r.sessions === 1 ? "" : "s"})</span></td>
+      <td>${poolText(r._req.pool)}</td>
       <td>${r.feasible ? '<span class="pill ok">feasible</span>'
                        : `<span class="pill err">no</span><div class="ctext">${esc(r.why)}</div>`}</td>
       <td>${r.feasible ? roomsText(r) : ""}</td>
@@ -226,11 +262,11 @@ function renderResults() {
     const rooms = b.by_size.filter(s => s.needed > 0)
       .map(s => `${s.needed} room${s.needed > 1 ? "s" : ""} of ${s.rows}&times;${s.cols}`).join(", ");
     $("best").innerHTML = `<b>${b.days} exam days &times; ${b.slots} slot${b.slots > 1 ? "s" : ""} a day</b>
-      (${b.sessions} sessions), needing <b>${rooms}</b>.<br>
+      (${b.sessions} sessions) with ${poolWords(b._req.pool)}, needing <b>${rooms}</b>.<br>
       Score <b>${b.score}</b> = ${b.days} days &times; ${+$("wday").value} + ${b.rooms_needed} rooms &times; ${+$("wroom").value}
       + ${b.penalty} soft penalty. Busiest session: ${b.peak_load} of ${b.limit} allowed seats.` +
       (b === S.best ? "" : `<br><span class="muted">The best is ${S.best.days} days &times; ${S.best.slots} ` +
-                           `slot${S.best.slots > 1 ? "s" : ""} (score ${S.best.score}).</span>`);
+                           `slot${S.best.slots > 1 ? "s" : ""} with ${poolWords(S.best._req.pool)} (score ${S.best.score}).</span>`);
     $("bestcard").classList.remove("hidden");
   }
 }
@@ -246,7 +282,7 @@ $("go").onclick = async () => {
   for (let i = 0; i < opts.length && !S.stop; i++) {
     const o = opts[i];
     $("status").className = "status busy";
-    $("status").innerHTML = `Trying <b>${o.days} days &times; ${o.k} slot${o.k > 1 ? "s" : ""}</b> &hellip; (${i + 1} of ${opts.length})`;
+    $("status").innerHTML = `Trying <b>${o.days} days &times; ${o.k} slot${o.k > 1 ? "s" : ""}, ${poolWords(o.pool)}</b> &hellip; (${i + 1} of ${opts.length})`;
     const req = body(o);
     const r = await fetch("/api/plan/option", { method: "POST", headers: { "Content-Type": "application/json" },
                                                  body: JSON.stringify(req) });
@@ -254,8 +290,9 @@ $("go").onclick = async () => {
     if (!r.ok) { $("status").className = "status error"; $("status").textContent = d.message; break; }
     d._req = req;        // apply exactly what was tested, even if the form changes later
     S.results.push(d);
-    renderResults();
+    if (i % 10 === 0 || i === opts.length - 1) renderResults();   // keep a long run responsive
   }
+  if (S.results.length) renderResults();
   const n = S.results.length, ok = S.results.filter(r => r.feasible).length;
   if (n) {
     $("status").className = "status " + (ok ? "ok" : "error");
@@ -265,6 +302,7 @@ $("go").onclick = async () => {
   $("go").disabled = false; $("stop").classList.add("hidden");
 };
 $("stop").onclick = () => { S.stop = true; };
+$("showno").onchange = () => S.results.length && renderResults();
 $("addroom").onclick = () => { poolRow({ rows: 10, cols: 10, count: 2 }); updateCount(); };
 
 $("apply").onclick = async () => {
@@ -276,7 +314,7 @@ $("apply").onclick = async () => {
   const el = $("applied");
   el.className = "msg " + (r.ok ? "ok" : "error");
   el.innerHTML = r.ok
-    ? `Done: the app now uses ${b.days} days &times; ${b.slots} slots and this room pool. ` +
+    ? `Done: the app now uses ${b.days} days &times; ${b.slots} slots and ${poolWords(b._req.pool)}. ` +
       `<a href="/data?tab=timetable">See the timetable</a> or <a href="/">seat the sessions</a>.`
     : esc((await r.json()).message);
   $("apply").disabled = false;
